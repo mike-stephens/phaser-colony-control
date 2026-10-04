@@ -16,15 +16,19 @@ export interface SelectionOptions {
   getState: () => GameState;
   /** Handles a right-click order; returns the marker colour to flash, or null if nothing happened. */
   onCommand: (antIds: number[], target: Point) => number | null;
+  /** Sets the nest's rally point (right-click while the nest is selected). */
+  onRally: (target: Point) => void;
   /** Food source under a world point that this player may interact with. */
   foodAt: (p: Point) => number | null;
+  /** True when a world point is on this player's nest. */
+  isOnNest: (p: Point) => boolean;
   /** True when a screen point is over HUD UI, so the click is not for the world. */
   isOverUi: (sx: number, sy: number) => boolean;
 }
 
 /**
  * Mouse/trackpad unit control:
- *   left-click             select one ant (Shift toggles it), or a food source
+ *   left-click             select one ant (Shift toggles it), a food source, or the nest
  *   left-drag              box-select (Shift adds to the selection)
  *   right-click / two-finger click / Ctrl+click   order selected ants
  *   right- or middle-drag  pan the camera
@@ -32,6 +36,7 @@ export interface SelectionOptions {
 export class SelectionController {
   readonly selected = new Set<number>();
   selectedFood: number | null = null;
+  selectedNest = false;
   private gesture: Gesture = 'none';
   private start = new Phaser.Math.Vector2();
   private dragging = false;
@@ -55,12 +60,18 @@ export class SelectionController {
   }
 
   get hasSelection(): boolean {
-    return this.selected.size > 0 || this.selectedFood !== null;
+    return this.selected.size > 0 || this.selectedFood !== null || this.selectedNest;
   }
 
   clear(): void {
     this.selected.clear();
     this.selectedFood = null;
+    this.selectedNest = false;
+  }
+
+  selectNest(): void {
+    this.clear();
+    this.selectedNest = true;
   }
 
   /** Drops selections whose ants or food no longer exist. */
@@ -110,10 +121,13 @@ export class SelectionController {
 
     if (gesture === 'command' && !this.dragging) {
       const ids = [...this.selected];
+      const target = this.camera.screenToWorld(p.x, p.y);
       if (ids.length > 0) {
-        const target = this.camera.screenToWorld(p.x, p.y);
         const color = this.opts.onCommand(ids, target);
         if (color !== null) this.showMarker(target, color);
+      } else if (this.selectedNest) {
+        this.opts.onRally(target);
+        this.showMarker(target, BOX_COLOR);
       }
     } else if (gesture === 'select') {
       if (this.dragging) this.selectInBox(p.x, p.y, ev.shiftKey);
@@ -142,6 +156,7 @@ export class SelectionController {
     const [y0, y1] = [Math.min(a.y, b.y), Math.max(a.y, b.y)];
     if (!additive) this.selected.clear();
     this.selectedFood = null;
+    this.selectedNest = false;
     for (const ant of this.opts.getState().ants) {
       if (ant.colony === this.opts.colony && ant.x >= x0 && ant.x <= x1 && ant.y >= y0 && ant.y <= y1) {
         this.selected.add(ant.id);
@@ -165,10 +180,12 @@ export class SelectionController {
     }
 
     if (best === null) {
-      // No ant here: select a food source instead (replacing the ant selection).
+      // No ant here: select the nest or a food source instead (replacing the ant selection).
       const food = this.opts.foodAt(w);
-      if (food !== null) {
-        this.selected.clear();
+      if (this.opts.isOnNest(w)) {
+        this.selectNest();
+      } else if (food !== null) {
+        this.clear();
         this.selectedFood = food;
       } else if (!toggle) {
         this.clear();
@@ -177,6 +194,7 @@ export class SelectionController {
     }
 
     this.selectedFood = null;
+    this.selectedNest = false;
     if (!toggle) this.selected.clear();
     if (toggle && this.selected.has(best)) this.selected.delete(best);
     else this.selected.add(best);

@@ -67,16 +67,10 @@ function placeFood(map: GameMap, rng: Rng, nests: TilePos[]): FoodSite[] {
     }
   }
 
-  const target = sites.length + Math.round((map.width * map.height) / 600);
-  for (let attempt = 0; attempt < 5000 && sites.length < target; attempt++) {
-    const tile = { x: rng.int(2, map.width - 3), y: rng.int(2, map.height - 3) };
-    if (
-      open(tile) &&
-      nests.every((n) => dist(n, tile) >= 10) &&
-      sites.every((s) => dist(s.tile, tile) >= 6)
-    ) {
-      add(tile, rng.pick(FOOD_KINDS));
-    }
+  const target = sites.length + foodSourceTarget(map);
+  for (let attempt = 0; attempt < 200 && sites.length < target; attempt++) {
+    const tile = findFoodSpot(map, rng, nests, sites.map((s) => s.tile));
+    if (tile) add(tile, rng.pick(FOOD_KINDS));
   }
   return sites;
 }
@@ -139,4 +133,31 @@ function pickNestSites(map: GameMap, rng: Rng, count: number): TilePos[] {
     );
   }
   return sites;
+}
+
+/** Roughly how many food sources a map of this size should hold away from the nests. */
+export function foodSourceTarget(map: GameMap): number {
+  return Math.round((map.width * map.height) / 600);
+}
+
+/**
+ * A random open tile away from nests and existing food, or null if a few tries
+ * fail. Shared by map generation and food regrowth during play.
+ */
+export function findFoodSpot(map: GameMap, rng: Rng, nests: TilePos[], existing: TilePos[]): TilePos | null {
+  const dist = (a: TilePos, b: TilePos) => Math.hypot(a.x - b.x, a.y - b.y);
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const tile = { x: rng.int(2, map.width - 3), y: rng.int(2, map.height - 3) };
+    const open = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dy]) =>
+      isWalkable(map, tile.x + dx, tile.y + dy),
+    );
+    if (open && nests.every((n) => dist(n, tile) >= 10) && existing.every((e) => dist(e, tile) >= 6)) {
+      return tile;
+    }
+  }
+  return null;
+}
+
+export function randomFoodKind(rng: Rng): FoodKind {
+  return rng.pick(FOOD_KINDS);
 }

@@ -10,6 +10,8 @@ SimAnt-style RTS in Phaser 4 + TypeScript + Vite. See README.md for the roadmap.
 - Pathfinding: A* on tiles (`src/sim/pathfinding.ts`), budgeted per tick by node count. Path requests are queued on `ant.moveTarget`. Reachability uses precomputed regions (`src/sim/regions.ts`), so call `invalidateRegions(map)` after any change to terrain.
 - Ant behaviour beyond walking lives in `ant.task` (`idle` / `explore` / `gather`), advanced each tick by `src/sim/tasks.ts`. Simulation randomness uses `state.rngState` so games replay deterministically.
 - Fog of war is per colony: `state.fog[colony]` is the saved explored grid; current visibility is derived each tick (`src/sim/fog.ts`). Commands must respect fog (e.g. you can only gather food you have explored) so the AI can't cheat.
+- Economy (training queue, upkeep/starvation, food regrowth) is in `src/sim/economy.ts`; balance numbers live there as constants. `state.rules` switches whole systems off (tests use this for exact food totals).
+- The AI (`src/sim/ai.ts`) runs inside the simulation tick, issues `Command`s like the player, and reads only its own fog. After changing AI or economy numbers, simulate ~20 seeds for 10+ minutes and check the AI doesn't starve.
 - In dev builds `window.game` is the Phaser.Game, for console poking and automated browser checks.
 - HUD text belongs in `HudScene` (its own camera) so it doesn't zoom with the world.
 - **All randomness goes through `Rng` (`src/sim/rng.ts`)** so a seed reproduces a game. Never use `Math.random()` inside `src/sim/`.

@@ -1,9 +1,10 @@
-import { Ant, isMoving } from './ants';
+import { Ant, AntType, isMoving } from './ants';
+import { ANT_COST, trainBlocker } from './economy';
 import { isExploredBy } from './fog';
 import { formationSlots } from './formation';
 import { Point, worldToTile } from './map';
 import { regionAt } from './regions';
-import { ColonyId, GameState, nestPoint } from './state';
+import { ColonyId, GameState, getColony, nestPoint } from './state';
 import { EXPLORE_RADIUS, startGathering } from './tasks';
 
 /**
@@ -15,7 +16,13 @@ export type Command =
   | { type: 'explore'; antIds: number[]; target: Point }
   | { type: 'gather'; antIds: number[]; foodId: number }
   /** Adjusts how many of the colony's workers gather from one food source. */
-  | { type: 'setGatherers'; foodId: number; count: number };
+  | { type: 'setGatherers'; foodId: number; count: number }
+  /** Queues an ant at the nest, paying its food cost now. */
+  | { type: 'train'; antType: AntType }
+  /** Removes queue[index] and refunds it (cancelling index 0 loses its progress). */
+  | { type: 'cancelTraining'; index: number }
+  /** Where newly hatched ants gather; null resets to the nest. */
+  | { type: 'setRally'; target: Point | null };
 
 export function issueCommand(state: GameState, colony: ColonyId, command: Command): void {
   switch (command.type) {
@@ -30,6 +37,25 @@ export function issueCommand(state: GameState, colony: ColonyId, command: Comman
       break;
     case 'setGatherers':
       setGatherers(state, colony, command.foodId, command.count);
+      break;
+    case 'train': {
+      const c = getColony(state, colony);
+      if (trainBlocker(state, c, command.antType) !== null) break;
+      c.food -= ANT_COST[command.antType].food;
+      c.queue.push(command.antType);
+      break;
+    }
+    case 'cancelTraining': {
+      const c = getColony(state, colony);
+      const type = c.queue[command.index];
+      if (!type) break;
+      c.queue.splice(command.index, 1);
+      c.food += ANT_COST[type].food;
+      if (command.index === 0) c.progress = 0;
+      break;
+    }
+    case 'setRally':
+      getColony(state, colony).rally = command.target ? { ...command.target } : null;
       break;
   }
 }

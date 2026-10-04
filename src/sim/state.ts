@@ -14,6 +14,21 @@ export interface Colony {
   isPlayer: boolean;
   nest: TilePos;
   food: number;
+  /** Ants waiting to hatch, in order. Food is paid when queued. */
+  queue: AntType[];
+  /** Ticks spent growing queue[0]. */
+  progress: number;
+  /** Where new ants walk after hatching; null = just outside the nest. */
+  rally: Point | null;
+  /** True when the colony couldn't feed every ant at the last meal. */
+  starving: boolean;
+}
+
+/** Toggles for whole systems; tests and future sandbox modes switch these off. */
+export interface Rules {
+  upkeep: boolean;
+  ai: boolean;
+  foodRegrowth: boolean;
 }
 
 /**
@@ -34,9 +49,11 @@ export interface GameState {
   fog: Record<ColonyId, number[]>;
   /** Next id for any entity (ants, food, ...). */
   nextId: number;
+  rules: Rules;
 }
 
 const STARTING_ANTS: Record<AntType, number> = { worker: 10, soldier: 5, queen: 0 };
+export const STARTING_FOOD = 100;
 
 export function createNewGame(seed: number): GameState {
   const { map, nestSites, foodSites } = generateWorld(seed, MAP_WIDTH, MAP_HEIGHT);
@@ -47,14 +64,12 @@ export function createNewGame(seed: number): GameState {
     rngState: (seed ^ 0x9e3779b9) >>> 0,
     tick: 0,
     map,
-    colonies: [
-      { id: 'black', isPlayer: true, nest: nestSites[0], food: 50 },
-      { id: 'red', isPlayer: false, nest: nestSites[1], food: 50 },
-    ],
+    colonies: [newColony('black', true, nestSites[0]), newColony('red', false, nestSites[1])],
     ants: [],
     food: [],
     fog: { black: new Array(tileCount).fill(0), red: new Array(tileCount).fill(0) },
     nextId: 1,
+    rules: { upkeep: true, ai: true, foodRegrowth: true },
   };
   for (const site of foodSites) {
     state.food.push({
@@ -69,6 +84,10 @@ export function createNewGame(seed: number): GameState {
   for (const colony of state.colonies) spawnStartingAnts(state, colony);
   updateFog(state);
   return state;
+}
+
+function newColony(id: ColonyId, isPlayer: boolean, nest: TilePos): Colony {
+  return { id, isPlayer, nest, food: STARTING_FOOD, queue: [], progress: 0, rally: null, starving: false };
 }
 
 export function getColony(state: GameState, id: ColonyId): Colony {

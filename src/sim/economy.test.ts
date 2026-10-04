@@ -8,6 +8,12 @@ import { GameState, createNewGame, getColony, nestPoint } from './state';
 const run = (state: GameState, ticks: number) => {
   for (let i = 0; i < ticks; i++) stepSimulation(state);
 };
+/** A game with upkeep and AI switched off, so food totals are exact. */
+const quietGame = (seed: number) => {
+  const state = createNewGame(seed);
+  state.rules = { upkeep: false, ai: false, foodRegrowth: false };
+  return state;
+};
 const workersOf = (state: GameState) => state.ants.filter((a) => a.colony === 'black' && a.type === 'worker');
 
 /** The closest food source to the black nest; mapgen guarantees one nearby. */
@@ -71,7 +77,7 @@ describe('fog of war', () => {
 
 describe('gathering', () => {
   it('moves food from a source into the colony store', () => {
-    const state = createNewGame(3);
+    const state = quietGame(3);
     const food = nearestFood(state);
     const startAmount = food.amount;
     const startStore = getColony(state, 'black').food;
@@ -103,7 +109,7 @@ describe('gathering', () => {
   });
 
   it('removes a source when it is used up and stops its gatherers', () => {
-    const state = createNewGame(3);
+    const state = quietGame(3);
     const food = nearestFood(state);
     food.amount = 10;
     food.max = 10;
@@ -112,7 +118,7 @@ describe('gathering', () => {
     issueCommand(state, 'black', { type: 'setGatherers', foodId: food.id, count: 4 });
     run(state, 20 * 60);
     expect(state.food).toHaveLength(0);
-    expect(getColony(state, 'black').food).toBe(60);
+    expect(getColony(state, 'black').food).toBe(110);
     expect(workersOf(state).every((a) => a.task.kind === 'idle' && a.carrying === 0)).toBe(true);
   });
 });

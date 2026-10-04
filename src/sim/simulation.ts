@@ -1,4 +1,6 @@
+import { updateAi } from './ai';
 import { ANT_STATS, Ant } from './ants';
+import { updateEconomy } from './economy';
 import { updateFog } from './fog';
 import { Point, tileCenter, worldToTile } from './map';
 import { findPath, smoothPath } from './pathfinding';
@@ -19,6 +21,8 @@ const PATH_NODE_BUDGET = 40_000;
 export function stepSimulation(state: GameState): void {
   state.tick++;
   const rng = new Rng(state.rngState);
+  updateAi(state, rng);
+  updateEconomy(state, rng);
   updateTasks(state, rng);
   processPathRequests(state);
   for (const ant of state.ants) {
