@@ -14,7 +14,7 @@ describe('createNewGame', () => {
   it('places every nest on walkable ground', () => {
     for (let seed = 0; seed < 50; seed++) {
       const { map, colonies } = createNewGame(seed);
-      for (const c of colonies) expect(isWalkable(map, c.nest.x, c.nest.y)).toBe(true);
+      for (const c of colonies) expect(isWalkable(map, c.nests[0].tile.x, c.nests[0].tile.y)).toBe(true);
     }
   });
 });

@@ -39,6 +39,13 @@ Dev shortcut: add `?seed=12345` (optionally `&difficulty=easy|medium|hard`) to t
 - **Walls:** press **B** (or use the nest panel) to enter build mode, drag to plan wall tiles, and set the number of builders with **−/+**. Builders carry pebbles from known pebble piles (found near rocks; one is always near your nest), 3 per wall tile. **Your ants pass through your own walls; enemies (and spiders) must go around, or chew through** (300 HP each). Walls can't block nest entrances.
 - **Saving:** **Esc** (with nothing selected) pauses, with Save / Save & quit. The game also autosaves every 2 minutes. Saves live in this browser's local storage; **Load game** on the menu lists them.
 
+## Nests, the underground and queens
+
+- **Underground (U, or the nest panel):** a live cross-section of a nest: queen chamber, nursery (one egg per ant in training), food store, and living chambers with your resting ants.
+- **Capacity:** chambers house ants (queen 10, nursery 5, food store 5, living 15). When the colony is nearly full, every nest digs a new chamber automatically, up to the 100-ant cap. Until it finishes, training waits ("Nest full: digging").
+- **Queens** (100 food) found new nests: select a queen, press **F** (or the panel button), and click a spot at least 15 tiles from every nest. She walks there and becomes the new nest: 400 HP to start (regenerating to 1000), with its own training queue, rally point and underground. Up to 4 nests.
+- Workers drop food at the nearest nest, and nests share one food store. **You only lose when your last nest falls**, so a second nest is insurance as well as faster growth. Red expands too (up to 2 nests on Medium, 3 on Hard).
+
 ## Controls
 
 Works with a trackpad or a mouse.
@@ -48,7 +55,9 @@ Works with a trackpad or a mouse.
 | Left-click an ant | Select it (Shift+click toggles it in the selection) |
 | Left-drag | Box-select your ants (Shift adds to the selection) |
 | Left-click a food source | Select it; use **−** / **+** in the panel to set how many workers gather it |
-| Left-click your nest, or press **H** | Select the nest: train workers / soldiers / queens, click a queued ant to cancel (refunded) |
+| Left-click a nest, or press **H** (again to cycle nests) | Select it: train workers / soldiers / queens there, click a queued ant to cancel (refunded) |
+| U | Underground view of the selected nest (U / Esc to return) |
+| F (with a queen selected) | Pick a site for the queen to found a new nest |
 | Right-click / two-finger click / Ctrl+click | Order selected ants: on an **enemy ant, spider or nest** attack it, on **food** gather it, in **black fog** explore that area, otherwise move. With the nest selected: set the rally point |
 | Two-finger swipe, mouse wheel, WASD / arrows, right- or middle-drag | Pan |
 | Pinch, Ctrl+wheel, Q / E | Zoom |
@@ -65,5 +74,6 @@ Works with a trackpad or a mouse.
 - [x] **Phase 4:** colony economy: food stockpile, spawning, upkeep
 - [x] **Phase 5:** combat, soldiers, red AI colony (easy / medium / hard), win/lose
 - [x] **Phase 6:** neutral creatures (spiders), pebble walls, save/load
-- [ ] **Phase 7:** underground view (auto-growing first), queens founding new colonies
+- [x] **Phase 7:** underground view (auto-growing first), queens founding new colonies
 - [ ] Real art: free asset packs and/or custom sprites
+- [ ] Player-directed digging underground (choose which chambers to dig)

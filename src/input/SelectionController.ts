@@ -20,8 +20,10 @@ export interface SelectionOptions {
   onRally: (target: Point) => void;
   /** Food source under a world point that this player may interact with. */
   foodAt: (p: Point) => number | null;
-  /** True when a world point is on this player's nest. */
-  isOnNest: (p: Point) => boolean;
+  /** Id of this player's nest under a world point, if any. */
+  nestAt: (p: Point) => number | null;
+  /** Founding mode: a left-click picks the site for the selected queen's new nest. */
+  onFoundSite: (p: Point) => void;
   /** True when a screen point is over HUD UI, so the click is not for the world. */
   isOverUi: (sx: number, sy: number) => boolean;
   /** Build mode: plan (or with erase, remove) a wall on the tile under a world point. */
@@ -39,8 +41,10 @@ export interface SelectionOptions {
 export class SelectionController {
   readonly selected = new Set<number>();
   selectedFood: number | null = null;
-  selectedNest = false;
+  /** Id of the selected nest, if a nest is selected. */
+  selectedNest: number | null = null;
   buildMode = false;
+  foundMode = false;
   private eraseStroke = false;
   private gesture: Gesture = 'none';
   private start = new Phaser.Math.Vector2();
@@ -65,18 +69,18 @@ export class SelectionController {
   }
 
   get hasSelection(): boolean {
-    return this.selected.size > 0 || this.selectedFood !== null || this.selectedNest;
+    return this.selected.size > 0 || this.selectedFood !== null || this.selectedNest !== null;
   }
 
   clear(): void {
     this.selected.clear();
     this.selectedFood = null;
-    this.selectedNest = false;
+    this.selectedNest = null;
   }
 
-  selectNest(): void {
+  selectNest(id: number): void {
     this.clear();
-    this.selectedNest = true;
+    this.selectedNest = id;
   }
 
   /** Drops selections whose ants or food no longer exist. */
@@ -88,6 +92,9 @@ export class SelectionController {
     }
     if (this.selectedFood !== null && !state.food.some((f) => f.id === this.selectedFood)) {
       this.selectedFood = null;
+    }
+    if (this.selectedNest !== null && !state.colonies.some((c) => c.nests.some((n) => n.id === this.selectedNest))) {
+      this.selectedNest = null;
     }
   }
 
@@ -101,6 +108,11 @@ export class SelectionController {
     const isCommand = p.button === 2 || p.button === 1 || (p.button === 0 && ev.ctrlKey);
     this.start.set(p.x, p.y);
     this.dragging = false;
+    if (this.foundMode) {
+      this.gesture = 'none';
+      if (!isCommand) this.opts.onFoundSite(this.camera.screenToWorld(p.x, p.y));
+      return;
+    }
     if (this.buildMode) {
       this.gesture = 'paint';
       this.eraseStroke = isCommand;
@@ -140,7 +152,7 @@ export class SelectionController {
       if (ids.length > 0) {
         const color = this.opts.onCommand(ids, target);
         if (color !== null) this.showMarker(target, color);
-      } else if (this.selectedNest) {
+      } else if (this.selectedNest !== null) {
         this.opts.onRally(target);
         this.showMarker(target, BOX_COLOR);
       }
@@ -171,7 +183,7 @@ export class SelectionController {
     const [y0, y1] = [Math.min(a.y, b.y), Math.max(a.y, b.y)];
     if (!additive) this.selected.clear();
     this.selectedFood = null;
-    this.selectedNest = false;
+    this.selectedNest = null;
     for (const ant of this.opts.getState().ants) {
       if (ant.colony === this.opts.colony && ant.x >= x0 && ant.x <= x1 && ant.y >= y0 && ant.y <= y1) {
         this.selected.add(ant.id);
@@ -197,8 +209,9 @@ export class SelectionController {
     if (best === null) {
       // No ant here: select the nest or a food source instead (replacing the ant selection).
       const food = this.opts.foodAt(w);
-      if (this.opts.isOnNest(w)) {
-        this.selectNest();
+      const nest = this.opts.nestAt(w);
+      if (nest !== null) {
+        this.selectNest(nest);
       } else if (food !== null) {
         this.clear();
         this.selectedFood = food;
@@ -209,7 +222,7 @@ export class SelectionController {
     }
 
     this.selectedFood = null;
-    this.selectedNest = false;
+    this.selectedNest = null;
     if (!toggle) this.selected.clear();
     if (toggle && this.selected.has(best)) this.selected.delete(best);
     else this.selected.add(best);

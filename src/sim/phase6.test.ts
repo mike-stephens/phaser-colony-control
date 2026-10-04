@@ -23,7 +23,7 @@ function openPatch(state: GameState, minDist: number): TilePos {
   const { map } = state;
   for (let y = 5; y < map.height - 5; y++) {
     for (let x = 5; x < map.width - 5; x++) {
-      if (state.colonies.some((c) => Math.hypot(c.nest.x - x, c.nest.y - y) < minDist)) continue;
+      if (state.colonies.some((c) => Math.hypot(c.nests[0].tile.x - x, c.nests[0].tile.y - y) < minDist)) continue;
       let ok = true;
       for (let dy = -3; dy <= 3 && ok; dy++) for (let dx = -3; dx <= 3 && ok; dx++) ok = isWalkable(map, x + dx, y + dy);
       if (ok) return { x, y };
@@ -48,8 +48,8 @@ function ring(state: GameState, c: TilePos, owner: 'black' | 'red', hp: number, 
 describe('wall planning', () => {
   it('rejects unexplored ground, nest entrances and blocked tiles', () => {
     const state = quietGame();
-    const nest = getColony(state, 'black').nest;
-    const red = getColony(state, 'red').nest;
+    const nest = getColony(state, 'black').nests[0].tile;
+    const red = getColony(state, 'red').nests[0].tile;
     expect(wallPlanBlocker(state, 'black', nest.x + 1, nest.y)).toBe('Too close to a nest');
     expect(wallPlanBlocker(state, 'black', red.x + 5, red.y)).toBe('Unexplored');
     expect(wallPlanBlocker(state, 'black', nest.x + 4, nest.y)).toBeNull();
@@ -61,7 +61,7 @@ describe('wall planning', () => {
 describe('building walls', () => {
   it('builders haul pebbles from a known pile and finish the plans', () => {
     const state = quietGame();
-    const nest = getColony(state, 'black').nest;
+    const nest = getColony(state, 'black').nests[0].tile;
     const plans = [{ x: nest.x + 4, y: nest.y }, { x: nest.x + 4, y: nest.y + 1 }].filter(
       (t) => wallPlanBlocker(state, 'black', t.x, t.y) === null,
     );
@@ -171,7 +171,7 @@ describe('spiders', () => {
 describe('save and load', () => {
   it('a JSON round-trip continues exactly like the original game', () => {
     const state = createNewGame(21, 'hard');
-    const nest = getColony(state, 'black').nest;
+    const nest = getColony(state, 'black').nests[0].tile;
     issueCommand(state, 'black', { type: 'planWalls', tiles: [{ x: nest.x + 4, y: nest.y }, { x: nest.x + 4, y: nest.y - 1 }] });
     issueCommand(state, 'black', { type: 'setBuilders', count: 2 });
     run(state, 20 * 60 * 4);

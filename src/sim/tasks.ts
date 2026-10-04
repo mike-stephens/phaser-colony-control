@@ -5,7 +5,9 @@ import { Point, isWalkable, isWalkableWorld, tileCenter, worldToTile } from './m
 import { regionAt } from './regions';
 import { Rng } from './rng';
 import { AI_PROFILES } from './difficulty';
-import { GameState, getColony, nestPoint } from './state';
+import { GameState, NEW_NEST_HP, createNest, getColony, nearestNest, nestCenter } from './state';
+import { foundBlocker } from './founding';
+import { newUnderground } from './underground';
 import { PebblePile, WALL_HP, WALL_PEBBLES, Wall, openPlans } from './walls';
 
 type GatherTask = Extract<Task, { kind: 'gather' }>;
@@ -23,9 +25,15 @@ const REPLACEMENT_SEARCH = 12;
 const MAX_RETRIES = 3;
 
 /** Advances every ant's task by one tick. May set ant.moveTarget. */
+/** Centre of the ant's colony's nearest nest (falls back to the ant itself if it has none). */
+function home(state: GameState, ant: Ant): Point {
+  const nest = nearestNest(state, ant.colony, ant);
+  return nest ? nestCenter(nest) : { x: ant.x, y: ant.y };
+}
+
 export function updateTasks(state: GameState, rng: Rng): void {
-  for (const ant of state.ants) {
-    if (ant.carrying > 0 && !isMoving(ant) && dist(ant, nestPoint(state, ant.colony)) <= DEPOSIT_DIST) {
+  for (const ant of [...state.ants]) {
+    if (ant.carrying > 0 && !isMoving(ant) && dist(ant, home(state, ant)) <= DEPOSIT_DIST) {
       const colony = getColony(state, ant.colony);
       const amount = colony.isPlayer
         ? ant.carrying
@@ -38,6 +46,7 @@ export function updateTasks(state: GameState, rng: Rng): void {
     if (task.kind === 'gather') updateGather(state, ant, task, rng);
     else if (task.kind === 'explore') updateExplore(state, ant, task, rng);
     else if (task.kind === 'build') updateBuild(state, ant, task, rng);
+    else if (task.kind === 'found') updateFound(state, ant, task);
   }
 }
 
@@ -89,7 +98,7 @@ function updateGather(state: GameState, ant: Ant, task: GatherTask, rng: Rng): v
 
     case 'toNest': {
       if (isMoving(ant)) return;
-      const nest = nestPoint(state, ant.colony);
+      const nest = home(state, ant);
       // updateTasks deposits the load once the ant stops near the nest.
       if (dist(ant, nest) <= DEPOSIT_DIST && ant.carrying === 0) {
         task.phase = 'toFood';
@@ -105,7 +114,7 @@ function updateGather(state: GameState, ant: Ant, task: GatherTask, rng: Rng): v
 function headHome(state: GameState, ant: Ant, task: GatherTask, rng: Rng): void {
   task.phase = 'toNest';
   task.retries = 0;
-  ant.moveTarget = jitter(state, nestPoint(state, ant.colony), rng);
+  ant.moveTarget = jitter(state, home(state, ant), rng);
 }
 
 function retryMove(ant: Ant, task: GatherTask, target: Point): void {
@@ -160,8 +169,8 @@ export function startBuilding(ant: Ant): void {
 function updateBuild(state: GameState, ant: Ant, task: BuildTask, rng: Rng): void {
   const plans = openPlans(state, ant.colony);
   if (plans.length === 0) {
-    if (!isMoving(ant) && dist(ant, nestPoint(state, ant.colony)) > DEPOSIT_DIST * 2) {
-      ant.moveTarget = jitter(state, nestPoint(state, ant.colony), rng);
+    if (!isMoving(ant) && dist(ant, home(state, ant)) > DEPOSIT_DIST * 2) {
+      ant.moveTarget = jitter(state, home(state, ant), rng);
     }
     return;
   }
@@ -250,6 +259,40 @@ function nearestPlan(state: GameState, ant: Ant, plans: Wall[]): Wall {
     }
   }
   return best;
+}
+
+// ---------------------------------------------------------------- founding
+
+type FoundTask = Extract<Task, { kind: 'found' }>;
+
+/**
+ * A queen walks to her chosen site and, if it's still a legal spot when she
+ * arrives, settles there: she becomes the new nest (and leaves the map).
+ */
+function updateFound(state: GameState, ant: Ant, task: FoundTask): void {
+  if (isMoving(ant)) return;
+  const tx = worldToTile(task.target.x);
+  const ty = worldToTile(task.target.y);
+  if (dist(ant, { x: tileCenter(tx), y: tileCenter(ty) }) <= ARRIVE_DIST * 2) {
+    if (foundBlocker(state, ant.colony, tx, ty) !== null) {
+      ant.task = { kind: 'idle' };
+      return;
+    }
+    const colony = getColony(state, ant.colony);
+    // Each nest's underground layout is seeded from its id, so it is stable across saves.
+    const nestId = state.nextId++;
+    colony.nests.push(createNest(nestId, { x: tx, y: ty }, NEW_NEST_HP, newUnderground(new Rng(nestId * 7919), false)));
+    ant.hp = 0;
+    ant.task = { kind: 'idle' };
+    // She became the nest; she wasn't lost in battle.
+    state.ants = state.ants.filter((a) => a !== ant);
+    return;
+  }
+  if (task.retries++ >= MAX_RETRIES) {
+    ant.task = { kind: 'idle' };
+    return;
+  }
+  ant.moveTarget = { x: tileCenter(tx), y: tileCenter(ty) };
 }
 
 // ---------------------------------------------------------------- exploring

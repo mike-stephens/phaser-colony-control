@@ -62,7 +62,9 @@ export function wallPlanBlocker(state: GameState, colony: ColonyId, x: number, y
   const idx = y * map.width + x;
   if (state.walls[idx]) return 'Already a wall';
   for (const c of state.colonies) {
-    if (Math.hypot(c.nest.x - x, c.nest.y - y) <= NEST_CLEARANCE) return 'Too close to a nest';
+    for (const n of c.nests) {
+      if (Math.hypot(n.tile.x - x, n.tile.y - y) <= NEST_CLEARANCE) return 'Too close to a nest';
+    }
   }
   const cx = tileCenter(x);
   const cy = tileCenter(y);

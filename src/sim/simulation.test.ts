@@ -22,7 +22,7 @@ describe('move command', () => {
     state.rules = { upkeep: false, ai: false, foodRegrowth: false, wildlife: false };
     const black = state.ants.filter((a) => a.colony === 'black');
     const red = state.colonies.find((c) => c.id === 'red')!;
-    const target = { x: (red.nest.x + 0.5) * 32, y: (red.nest.y + 0.5) * 32 };
+    const target = { x: (red.nests[0].tile.x + 0.5) * 32, y: (red.nests[0].tile.y + 0.5) * 32 };
 
     issueCommand(state, 'black', { type: 'move', antIds: black.map((a) => a.id), target });
     for (let i = 0; i < 20 * 300; i++) {

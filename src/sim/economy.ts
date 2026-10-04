@@ -1,10 +1,10 @@
-import { MAX_UNITS_PER_COLONY } from '../config';
 import { ANT_STATS, AntType, createAnt } from './ants';
 import { FOOD_AMOUNTS } from './food';
 import { isWalkableWorld, tileCenter, worldToTile } from './map';
 import { findFoodSpot, foodSourceTarget, randomFoodKind } from './mapgen';
 import { Rng } from './rng';
-import { Colony, ColonyId, GameState, nestPoint } from './state';
+import { Colony, ColonyId, GameState, Nest, nestCenter } from './state';
+import { colonyCapacity, updateDigging } from './underground';
 
 /** Food cost and training time (in ticks; 20 ticks = 1 s) for each ant type. */
 export const ANT_COST: Record<AntType, { food: number; ticks: number }> = {
@@ -21,14 +21,17 @@ const STARVE_DAMAGE = 1 / 3;
 /** Share of max HP a fed ant recovers per meal. */
 const FED_HEAL = 0.25;
 export const MAX_QUEUE = 5;
-export const POPULATION_CAP = MAX_UNITS_PER_COLONY;
 /** Feeding order when food is short: queens first, soldiers last. */
 const FEEDING_ORDER: AntType[] = ['queen', 'worker', 'soldier'];
 /** How often (ticks) a new food source may appear somewhere in the yard. */
 export const FOOD_REGROW_TICKS = 1200;
 
 export function updateEconomy(state: GameState, rng: Rng): void {
-  for (const colony of state.colonies) if (!colony.eliminated) updateProduction(state, colony, rng);
+  for (const colony of state.colonies) {
+    if (colony.eliminated) continue;
+    for (const nest of colony.nests) updateProduction(state, colony, nest, rng);
+  }
+  updateDigging(state, rng);
   if (state.rules.foodRegrowth && state.tick % FOOD_REGROW_TICKS === 0) regrowFood(state, rng);
   if (state.rules.upkeep && state.tick % UPKEEP_INTERVAL_TICKS === 0) {
     // Ants starved to death here are removed (and counted) by combat.removeDead.
@@ -54,33 +57,41 @@ export function ticksUntilUpkeep(state: GameState): number {
   return UPKEEP_INTERVAL_TICKS - (state.tick % UPKEEP_INTERVAL_TICKS);
 }
 
-/** Why the colony can't queue this ant right now, or null if it can. */
-export function trainBlocker(state: GameState, colony: Colony, type: AntType): string | null {
-  if (colony.queue.length >= MAX_QUEUE) return 'Queue full';
-  if (population(state, colony.id) + colony.queue.length >= POPULATION_CAP) return 'Colony full';
+/** Ants queued across all of a colony's nests. */
+export function queuedCount(colony: Colony): number {
+  return colony.nests.reduce((n, nest) => n + nest.queue.length, 0);
+}
+
+/**
+ * Why `nest` can't queue this ant right now, or null if it can. The colony's
+ * underground sets how many ants it can house (hatched plus queued).
+ */
+export function trainBlocker(state: GameState, colony: Colony, nest: Nest, type: AntType): string | null {
+  if (nest.queue.length >= MAX_QUEUE) return 'Queue full';
+  if (population(state, colony.id) + queuedCount(colony) >= colonyCapacity(colony)) return 'Nest full: digging';
   if (colony.food < ANT_COST[type].food) return 'Not enough food';
   return null;
 }
 
-function updateProduction(state: GameState, colony: Colony, rng: Rng): void {
-  const type = colony.queue[0];
+function updateProduction(state: GameState, colony: Colony, nest: Nest, rng: Rng): void {
+  const type = nest.queue[0];
   if (!type) return;
-  if (colony.progress < ANT_COST[type].ticks) {
-    colony.progress++;
+  if (nest.progress < ANT_COST[type].ticks) {
+    nest.progress++;
     return;
   }
   // Fully grown; hatch it once there is room.
-  if (population(state, colony.id) >= POPULATION_CAP) return;
-  colony.queue.shift();
-  colony.progress = 0;
-  hatch(state, colony, type, rng);
+  if (population(state, colony.id) >= colonyCapacity(colony)) return;
+  nest.queue.shift();
+  nest.progress = 0;
+  hatch(state, colony, nest, type, rng);
 }
 
-function hatch(state: GameState, colony: Colony, type: AntType, rng: Rng): void {
-  const nest = nestPoint(state, colony.id);
-  const ant = createAnt(state.nextId++, colony.id, type, nest);
+function hatch(state: GameState, colony: Colony, nest: Nest, type: AntType, rng: Rng): void {
+  const at = nestCenter(nest);
+  const ant = createAnt(state.nextId++, colony.id, type, at);
   ant.angle = rng.next() * Math.PI * 2;
-  ant.moveTarget = colony.rally ?? nearNest(state, nest, rng);
+  ant.moveTarget = nest.rally ?? nearNest(state, at, rng);
   state.ants.push(ant);
   colony.stats.trained++;
 }
@@ -118,7 +129,7 @@ function payUpkeep(state: GameState, colony: Colony): void {
 /** Keeps the yard from running dry: tops food back up toward the map's starting level. */
 function regrowFood(state: GameState, rng: Rng): void {
   if (state.food.length >= foodSourceTarget(state.map)) return;
-  const nests = state.colonies.map((c) => c.nest);
+  const nests = state.colonies.flatMap((c) => c.nests.map((n) => n.tile));
   const existing = state.food.map((f) => ({ x: worldToTile(f.x), y: worldToTile(f.y) }));
   const tile = findFoodSpot(state.map, rng, nests, existing);
   if (!tile) return;

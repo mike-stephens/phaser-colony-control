@@ -16,6 +16,8 @@ export interface AiProfile {
    * not on equal terms with the player; shown in the menu so it's no secret.
    */
   gatherMultiplier: number;
+  /** Most nests the AI will found (1 = never expands). */
+  maxNests: number;
 }
 
 const MINUTE = 20 * 60;
@@ -28,6 +30,7 @@ export const AI_PROFILES: Record<Difficulty, AiProfile> = {
     workersPerSoldier: 3,
     minWorkersForSoldiers: 15,
     gatherMultiplier: 0.8,
+    maxNests: 1,
   },
   medium: {
     thinkInterval: 40,
@@ -36,6 +39,7 @@ export const AI_PROFILES: Record<Difficulty, AiProfile> = {
     workersPerSoldier: 2,
     minWorkersForSoldiers: 12,
     gatherMultiplier: 1,
+    maxNests: 2,
   },
   hard: {
     thinkInterval: 20,
@@ -44,5 +48,6 @@ export const AI_PROFILES: Record<Difficulty, AiProfile> = {
     workersPerSoldier: 1,
     minWorkersForSoldiers: 10,
     gatherMultiplier: 1.25,
+    maxNests: 3,
   },
 };

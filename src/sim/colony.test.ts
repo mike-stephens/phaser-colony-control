@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { issueCommand } from './commands';
-import { ANT_COST, POPULATION_CAP, UPKEEP_INTERVAL_TICKS, upkeepDue } from './economy';
+import { ANT_COST, UPKEEP_INTERVAL_TICKS, upkeepDue } from './economy';
+import { colonyCapacity } from './underground';
 import { createAnt } from './ants';
 import { stepSimulation } from './simulation';
 import { GameState, STARTING_FOOD, createNewGame, getColony, nestPoint } from './state';
@@ -22,13 +23,13 @@ describe('training', () => {
     const black = getColony(state, 'black');
     issueCommand(state, 'black', { type: 'train', antType: 'worker' });
     expect(black.food).toBe(STARTING_FOOD - ANT_COST.worker.food);
-    expect(black.queue).toEqual(['worker']);
+    expect(black.nests[0].queue).toEqual(['worker']);
 
     run(state, ANT_COST.worker.ticks);
     expect(count(state, 'black', 'worker')).toBe(10);
     run(state, 2);
     expect(count(state, 'black', 'worker')).toBe(11);
-    expect(black.queue).toEqual([]);
+    expect(black.nests[0].queue).toEqual([]);
 
     const hatchling = state.ants[state.ants.length - 1];
     const nest = nestPoint(state, 'black');
@@ -51,27 +52,27 @@ describe('training', () => {
     const black = getColony(state, 'black');
     black.food = 50;
     issueCommand(state, 'black', { type: 'train', antType: 'queen' });
-    expect(black.queue).toEqual([]);
+    expect(black.nests[0].queue).toEqual([]);
     expect(black.food).toBe(50);
 
     issueCommand(state, 'black', { type: 'train', antType: 'soldier' });
     issueCommand(state, 'black', { type: 'train', antType: 'worker' });
     expect(black.food).toBe(15);
     issueCommand(state, 'black', { type: 'cancelTraining', index: 0 });
-    expect(black.queue).toEqual(['worker']);
+    expect(black.nests[0].queue).toEqual(['worker']);
     expect(black.food).toBe(40);
   });
 
-  it('respects the population cap', () => {
+  it("respects the underground's capacity", () => {
     const state = quietGame();
     const black = getColony(state, 'black');
     black.food = 10_000;
-    while (count(state, 'black') < POPULATION_CAP - 1) {
+    while (count(state, 'black') < colonyCapacity(black) - 1) {
       state.ants.push(createAnt(state.nextId++, 'black', 'worker', nestPoint(state, 'black')));
     }
     issueCommand(state, 'black', { type: 'train', antType: 'worker' });
     issueCommand(state, 'black', { type: 'train', antType: 'worker' });
-    expect(black.queue).toHaveLength(1);
+    expect(black.nests[0].queue).toHaveLength(1);
   });
 });
 

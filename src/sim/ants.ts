@@ -25,7 +25,8 @@ export const ANT_STATS: Record<AntType, AntStats> = {
   queen: { speed: 36, maxHp: 40, radius: 10, sight: 3, damage: 3, attackCooldown: 20, aggroRange: 0 },
 };
 
-export type AttackTarget = { ant: number } | { nest: ColonyId } | { creature: number };
+/** `nest` is a nest id (colonies can have several nests). */
+export type AttackTarget = { ant: number } | { nest: number } | { creature: number };
 
 /**
  * What an ant is doing beyond its current path. A plain move order leaves the
@@ -45,6 +46,12 @@ export type Task =
       retries: number;
       /** Where the last food came from, to find a replacement when it runs out. */
       lastFoodPos: Point;
+    }
+  | {
+      /** A queen walking to a site to found a new nest there. */
+      kind: 'found';
+      target: Point;
+      retries: number;
     }
   | {
       kind: 'build';

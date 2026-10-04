@@ -42,8 +42,8 @@ describe('map generation', () => {
 describe('fog of war', () => {
   it('starts with only the area around each nest explored', () => {
     const state = createNewGame(7);
-    const black = getColony(state, 'black').nest;
-    const red = getColony(state, 'red').nest;
+    const black = getColony(state, 'black').nests[0].tile;
+    const red = getColony(state, 'red').nests[0].tile;
     expect(isExploredBy(state, 'black', black.x, black.y)).toBe(true);
     expect(isExploredBy(state, 'black', red.x, red.y)).toBe(false);
     expect(isVisibleTo(state, 'red', red.x, red.y)).toBe(true);
@@ -51,7 +51,7 @@ describe('fog of war', () => {
 
   it('explore orders reveal the target area', () => {
     const state = createNewGame(7);
-    const nest = getColony(state, 'black').nest;
+    const nest = getColony(state, 'black').nests[0].tile;
     const target = { x: (nest.x + 14) * 32, y: nest.y * 32 };
     const tx = worldToTile(target.x);
     const ty = worldToTile(target.y);

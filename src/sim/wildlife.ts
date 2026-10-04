@@ -88,7 +88,10 @@ function maybeSpawn(state: GameState, rng: Rng): void {
     const x = rng.int(2, map.width - 3);
     const y = rng.int(2, map.height - 3);
     if (!isWalkable(map, x, y)) continue;
-    if (state.colonies.some((c) => Math.hypot(c.nest.x - x, c.nest.y - y) < SPAWN_NEST_DISTANCE)) continue;
+    const nearNest = state.colonies.some((c) =>
+      c.nests.some((n) => Math.hypot(n.tile.x - x, n.tile.y - y) < SPAWN_NEST_DISTANCE),
+    );
+    if (nearNest) continue;
     const pos = { x: tileCenter(x), y: tileCenter(y) };
     state.creatures.push({
       id: state.nextId++,

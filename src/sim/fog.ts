@@ -27,7 +27,7 @@ export function updateFog(state: GameState): void {
       visible.set(colony.id, grid);
     }
     grid.fill(0);
-    reveal(map, grid, state.fog[colony.id], colony.nest.x, colony.nest.y, NEST_SIGHT);
+    for (const nest of colony.nests) reveal(map, grid, state.fog[colony.id], nest.tile.x, nest.tile.y, NEST_SIGHT);
   }
 
   for (const ant of state.ants) {

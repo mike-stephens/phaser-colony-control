@@ -4,7 +4,7 @@ import { ANT_COST } from './economy';
 import { isVisibleTo } from './fog';
 import { Point, isWalkableWorld, worldToTile } from './map';
 import { hasLineOfSight } from './pathfinding';
-import { ColonyId, GameState, NEST_MAX_HP, NEST_RADIUS, getColony, nestPoint } from './state';
+import { ColonyId, GameState, NEST_MAX_HP, NEST_RADIUS, findNest, getColony, nestCenter } from './state';
 import { Owner, blocks } from './walls';
 import { CREATURE_STATS, Creature } from './wildlife';
 
@@ -111,8 +111,8 @@ function targetPosition(state: GameState, target: AttackTarget, lookup: Lookup):
     const c = lookup.creatures.get(target.creature);
     return c && c.hp > 0 ? c : null;
   }
-  const colony = getColony(state, target.nest);
-  return colony.eliminated ? null : nestPoint(state, colony.id);
+  const found = findNest(state, target.nest);
+  return found ? nestCenter(found.nest) : null;
 }
 
 function targetRadius(target: AttackTarget, lookup: Lookup): number {
@@ -186,9 +186,10 @@ function bite(state: GameState, ant: Ant, target: AttackTarget, lookup: Lookup):
     c.lastAttacker = ant.id;
     if (wasAlive && c.hp <= 0) attackerColony.stats.kills++;
   } else {
-    const colony = getColony(state, target.nest);
-    colony.nestHp = Math.max(0, colony.nestHp - stats.damage);
-    colony.lastNestHitTick = state.tick;
+    const found = findNest(state, target.nest);
+    if (!found) return;
+    found.nest.hp = Math.max(0, found.nest.hp - stats.damage);
+    found.nest.lastHitTick = state.tick;
   }
 }
 
@@ -256,23 +257,32 @@ export function removeDead(state: GameState): void {
 
 function regenerateNests(state: GameState): void {
   for (const colony of state.colonies) {
-    if (colony.eliminated || colony.nestHp <= 0 || colony.nestHp >= NEST_MAX_HP) continue;
-    if (state.tick - colony.lastNestHitTick < NEST_REGEN_DELAY) continue;
-    colony.nestHp = Math.min(NEST_MAX_HP, colony.nestHp + NEST_REGEN_PER_TICK);
+    for (const nest of colony.nests) {
+      if (nest.hp <= 0 || nest.hp >= NEST_MAX_HP) continue;
+      if (state.tick - nest.lastHitTick < NEST_REGEN_DELAY) continue;
+      nest.hp = Math.min(NEST_MAX_HP, nest.hp + NEST_REGEN_PER_TICK);
+    }
   }
 }
 
 /**
- * A colony is out when its nest falls, or when it has no ants, nothing
- * hatching and can't afford a worker. Its remaining ants scatter and die.
- * The last colony standing wins.
+ * Nests at 0 HP collapse into ruins (losing their training queue, refunded
+ * nowhere). A colony is out when its last nest falls, or when it has no ants,
+ * nothing hatching and can't afford a worker; its remaining ants scatter and
+ * die. The last colony standing wins.
  */
 function checkElimination(state: GameState): void {
   for (const colony of state.colonies) {
     if (colony.eliminated) continue;
+    for (const nest of colony.nests.filter((n) => n.hp <= 0)) {
+      state.ruins.push({ colony: colony.id, tile: { ...nest.tile } });
+    }
+    colony.nests = colony.nests.filter((n) => n.hp > 0);
+
     const hasAnts = state.ants.some((a) => a.colony === colony.id);
-    const stranded = !hasAnts && colony.queue.length === 0 && colony.food < ANT_COST.worker.food;
-    if (colony.nestHp > 0 && !stranded) continue;
+    const queued = colony.nests.some((n) => n.queue.length > 0);
+    const stranded = !hasAnts && !queued && colony.food < ANT_COST.worker.food;
+    if (colony.nests.length > 0 && !stranded) continue;
     eliminate(state, colony.id);
   }
   const alive = state.colonies.filter((c) => !c.eliminated);
@@ -282,8 +292,8 @@ function checkElimination(state: GameState): void {
 function eliminate(state: GameState, id: ColonyId): void {
   const colony = getColony(state, id);
   colony.eliminated = true;
-  colony.queue = [];
-  colony.nestHp = 0;
+  for (const nest of colony.nests) state.ruins.push({ colony: id, tile: { ...nest.tile } });
+  colony.nests = [];
   for (const ant of state.ants) if (ant.colony === id) ant.hp = 0;
   removeDead(state);
 }

@@ -18,7 +18,18 @@ import { findFoodAt } from '../sim/food';
 import { Point, worldToTile } from '../sim/map';
 import { randomSeed } from '../sim/rng';
 import { TICK_MS, stepSimulation } from '../sim/simulation';
-import { Colony, ColonyId, GameState, NEST_MAX_HP, NEST_RADIUS, createNewGame, nestPoint } from '../sim/state';
+import { foundBlocker } from '../sim/founding';
+import {
+  Colony,
+  GameState,
+  MIN_NEST_SPACING,
+  NEST_MAX_HP,
+  NEST_RADIUS,
+  Nest,
+  allNests,
+  createNewGame,
+  nestCenter,
+} from '../sim/state';
 import { wallPlanBlocker } from '../sim/walls';
 import { CREATURE_STATS, Creature } from '../sim/wildlife';
 import type { HudScene } from './HudScene';
@@ -49,7 +60,8 @@ export class GameScene extends Phaser.Scene {
   private walls!: WallLayer;
   private fog!: FogLayer;
   private overlay!: Phaser.GameObjects.Graphics;
-  private nests = new Map<ColonyId, Phaser.GameObjects.Arc>();
+  private nestMounds = new Map<number, Phaser.GameObjects.Arc>();
+  private ruinMounds: Phaser.GameObjects.Arc[] = [];
   private accumulator = 0;
   private lastAutosaveTick = 0;
 
@@ -63,14 +75,14 @@ export class GameScene extends Phaser.Scene {
     this.accumulator = 0;
     this.paused = false;
     this.lastAutosaveTick = this.state.tick;
-    this.nests.clear();
+    this.nestMounds.clear();
+    this.ruinMounds = [];
   }
 
   create(): void {
     const { map } = this.state;
     generatePlaceholderTextures(this);
     this.drawMap();
-    this.drawNests();
     this.walls = new WallLayer(this);
     this.foods = new FoodLayer(this);
     this.ants = new AntLayer(this);
@@ -83,35 +95,50 @@ export class GameScene extends Phaser.Scene {
       colony: this.player.id,
       getState: () => this.state,
       onCommand: (antIds, target) => this.orderTo(antIds, target),
-      onRally: (target) => this.issue({ type: 'setRally', target }),
+      onRally: (target) => {
+        const nestId = this.selection.selectedNest ?? undefined;
+        this.issue({ type: 'setRally', target, nestId });
+      },
       foodAt: (p) => this.knownFoodAt(p),
-      isOnNest: (p) => dist(p, this.nestCenter) <= NEST_RADIUS + 4,
+      nestAt: (p) => this.player.nests.find((n) => dist(p, nestCenter(n)) <= NEST_RADIUS + 4)?.id ?? null,
+      onFoundSite: (p) => this.foundAt(p),
       isOverUi: (sx, sy) => (this.scene.get('Hud') as HudScene).isOverUi(sx, sy),
       onPaintWall: (p, erase) => {
         const tile = { x: worldToTile(p.x), y: worldToTile(p.y) };
         this.issue(erase ? { type: 'removeWalls', tiles: [tile] } : { type: 'planWalls', tiles: [tile] });
       },
     });
-    this.cameras.main.centerOn(this.nestCenter.x, this.nestCenter.y);
+    this.cameras.main.centerOn(this.homeCenter.x, this.homeCenter.y);
 
     const kb = this.input.keyboard!;
-    // Esc backs out one level: build mode, then selection, then pause.
+    // Esc backs out one level: underground view, a mode, the selection, then pause.
     kb.on('keydown-ESC', () => {
-      if (this.selection.buildMode) this.setBuildMode(false);
+      if (this.scene.isActive('Underground')) this.closeUnderground();
+      else if (this.selection.foundMode) this.selection.foundMode = false;
+      else if (this.selection.buildMode) this.setBuildMode(false);
       else if (this.selection.hasSelection) this.selection.clear();
       else this.togglePause();
     });
     kb.on('keydown-P', () => this.togglePause());
     kb.on('keydown-B', () => this.setBuildMode(!this.selection.buildMode));
-    // H: select the nest and jump the camera home.
+    kb.on('keydown-F', () => this.setFoundMode(!this.selection.foundMode));
+    kb.on('keydown-U', () => (this.scene.isActive('Underground') ? this.closeUnderground() : this.openUnderground()));
+    // H: select a nest and jump to it; pressing again cycles through your nests.
     kb.on('keydown-H', () => {
-      if (this.player.eliminated) return;
-      this.selection.selectNest();
-      this.cameras.main.centerOn(this.nestCenter.x, this.nestCenter.y);
+      const nests = this.player.nests;
+      if (nests.length === 0) return;
+      const i = nests.findIndex((n) => n.id === this.selection.selectedNest);
+      const next = nests[(i + 1) % nests.length];
+      this.selection.selectNest(next.id);
+      const c = nestCenter(next);
+      this.cameras.main.centerOn(c.x, c.y);
     });
 
     this.scene.launch('Hud');
-    this.events.once('shutdown', () => this.scene.stop('Hud'));
+    this.events.once('shutdown', () => {
+      this.scene.stop('Hud');
+      this.scene.stop('Underground');
+    });
   }
 
   update(_time: number, delta: number): void {
@@ -135,11 +162,58 @@ export class GameScene extends Phaser.Scene {
     this.foods.sync(state.food, this.selection.selectedFood, this.cameras.main.zoom);
     this.walls.sync(state, player.id, (tx, ty) => isExploredBy(state, player.id, tx, ty), true);
     this.fog.update(state, player.id);
+    this.syncNests();
     this.drawOverlay();
   }
 
-  get nestCenter(): Point {
-    return nestPoint(this.state, this.player.id);
+  /** Centre of the player's main nest (or the map centre once they have none). */
+  get homeCenter(): Point {
+    const nest = this.player.nests[0];
+    return nest ? nestCenter(nest) : { x: (this.state.map.width * TILE_SIZE) / 2, y: (this.state.map.height * TILE_SIZE) / 2 };
+  }
+
+  /** The player's selected nest, if one is selected. */
+  get selectedNest(): Nest | null {
+    const id = this.selection.selectedNest;
+    return id === null ? null : (this.player.nests.find((n) => n.id === id) ?? null);
+  }
+
+  /** Selected queens that can be sent to found a nest. */
+  get selectedQueens() {
+    return this.state.ants.filter((a) => a.type === 'queen' && this.selection.selected.has(a.id));
+  }
+
+  setFoundMode(on: boolean): void {
+    if (on && this.selectedQueens.length === 0) return;
+    this.selection.foundMode = on;
+    if (on) this.selection.buildMode = false;
+  }
+
+  private foundAt(p: Point): void {
+    const queen = this.selectedQueens.find((q) => q.task.kind !== 'found') ?? this.selectedQueens[0];
+    const hud = this.scene.get('Hud') as HudScene;
+    if (!queen) return this.setFoundMode(false);
+    const blocker = foundBlocker(this.state, this.player.id, worldToTile(p.x), worldToTile(p.y));
+    if (blocker) {
+      hud.toast(`Can't found a nest there: ${blocker}`);
+      return;
+    }
+    this.issue({ type: 'found', antId: queen.id, target: p });
+    this.selection.foundMode = false;
+    hud.toast('The queen sets off to found a new nest');
+  }
+
+  openUnderground(): void {
+    const nest = this.selectedNest ?? this.player.nests[0];
+    if (!nest) return;
+    this.selection.buildMode = false;
+    this.selection.foundMode = false;
+    this.scene.launch('Underground', { nestId: nest.id });
+    this.scene.bringToTop('Underground');
+  }
+
+  closeUnderground(): void {
+    this.scene.stop('Underground');
   }
 
   /** Issues a command on behalf of the human player. */
@@ -150,7 +224,10 @@ export class GameScene extends Phaser.Scene {
   setBuildMode(on: boolean): void {
     if (on && (this.player.eliminated || this.state.winner)) return;
     this.selection.buildMode = on;
-    if (on) this.selection.clear();
+    if (on) {
+      this.selection.clear();
+      this.selection.foundMode = false;
+    }
   }
 
   togglePause(): void {
@@ -234,15 +311,14 @@ export class GameScene extends Phaser.Scene {
     );
   }
 
-  private knownEnemyNestAt(p: Point): Colony | null {
+  private knownEnemyNestAt(p: Point): Nest | null {
     return (
-      this.state.colonies.find(
-        (c) =>
-          c.id !== this.player.id &&
-          !c.eliminated &&
-          isExploredBy(this.state, this.player.id, c.nest.x, c.nest.y) &&
-          dist(p, nestPoint(this.state, c.id)) <= NEST_RADIUS + 4,
-      ) ?? null
+      allNests(this.state).find(
+        ({ colony, nest }) =>
+          colony.id !== this.player.id &&
+          isExploredBy(this.state, this.player.id, nest.tile.x, nest.tile.y) &&
+          dist(p, nestCenter(nest)) <= NEST_RADIUS + 4,
+      )?.nest ?? null
     );
   }
 
@@ -263,36 +339,66 @@ export class GameScene extends Phaser.Scene {
     tilemap.createLayer(0, tileset, 0, 0)!.setDepth(DEPTH.terrain);
   }
 
-  private drawNests(): void {
-    for (const colony of this.state.colonies) {
-      const c = nestPoint(this.state, colony.id);
+  /** Keeps a mound per standing nest and rubble for each ruin. */
+  private syncNests(): void {
+    const standing = new Set<number>();
+    for (const { colony, nest } of allNests(this.state)) {
+      standing.add(nest.id);
+      if (this.nestMounds.has(nest.id)) continue;
+      const c = nestCenter(nest);
       const mound = this.add
         .circle(c.x, c.y, NEST_RADIUS, COLONY_COLORS[colony.id])
         .setStrokeStyle(3, 0xffffff)
         .setDepth(DEPTH.nests);
-      this.nests.set(colony.id, mound);
+      this.nestMounds.set(nest.id, mound);
+    }
+    for (const [id, mound] of this.nestMounds) {
+      if (!standing.has(id)) {
+        mound.destroy();
+        this.nestMounds.delete(id);
+      }
+    }
+    while (this.ruinMounds.length < this.state.ruins.length) {
+      const ruin = this.state.ruins[this.ruinMounds.length];
+      const c = { x: (ruin.tile.x + 0.5) * TILE_SIZE, y: (ruin.tile.y + 0.5) * TILE_SIZE };
+      this.ruinMounds.push(
+        this.add.circle(c.x, c.y, NEST_RADIUS, 0x3a2e22).setStrokeStyle(3, 0x666666).setDepth(DEPTH.nests),
+      );
     }
   }
 
-  /** Nest health bars, the destroyed-nest look, the rally flag, and the build-mode cursor. */
+  /** Nest health bars, the rally flag, and the build/found-mode cursors. */
   private drawOverlay(): void {
     const g = this.overlay;
     const zoom = this.cameras.main.zoom;
     g.clear();
 
-    for (const colony of this.state.colonies) {
-      const c = nestPoint(this.state, colony.id);
-      if (colony.eliminated) {
-        this.nests.get(colony.id)!.setFillStyle(0x3a2e22).setStrokeStyle(3, 0x666666);
-        continue;
-      }
-      const seen = colony.id === this.player.id || isVisibleTo(this.state, this.player.id, colony.nest.x, colony.nest.y);
-      if (!seen || colony.nestHp >= NEST_MAX_HP) continue;
+    for (const { colony, nest } of allNests(this.state)) {
+      const c = nestCenter(nest);
+      const seen = colony.id === this.player.id || isVisibleTo(this.state, this.player.id, nest.tile.x, nest.tile.y);
+      if (!seen || nest.hp >= NEST_MAX_HP) continue;
       const w = 60;
-      const frac = colony.nestHp / NEST_MAX_HP;
+      const frac = nest.hp / NEST_MAX_HP;
       const top = c.y - NEST_RADIUS - 14;
       g.fillStyle(0x000000, 0.75).fillRect(c.x - w / 2 - 1, top - 1, w + 2, 7);
       g.fillStyle(frac > 0.5 ? 0x6ad04a : frac > 0.25 ? 0xe0b13a : 0xe04a3a).fillRect(c.x - w / 2, top, w * frac, 5);
+    }
+
+    if (this.selection.foundMode) {
+      // Show the no-go zone around every known nest and whether the cursor spot works.
+      for (const { nest } of allNests(this.state)) {
+        if (!isExploredBy(this.state, this.player.id, nest.tile.x, nest.tile.y)) continue;
+        const c = nestCenter(nest);
+        g.lineStyle(1.5 / zoom, 0xff4d4d, 0.5).strokeCircle(c.x, c.y, MIN_NEST_SPACING * TILE_SIZE);
+      }
+      const p = this.input.activePointer;
+      const w = this.cameraCtl.screenToWorld(p.x, p.y);
+      const ok = foundBlocker(this.state, this.player.id, worldToTile(w.x), worldToTile(w.y)) === null;
+      g.lineStyle(3 / zoom, ok ? 0x7dff6a : 0xff4d4d).strokeCircle(
+        (worldToTile(w.x) + 0.5) * TILE_SIZE,
+        (worldToTile(w.y) + 0.5) * TILE_SIZE,
+        NEST_RADIUS,
+      );
     }
 
     if (this.selection.buildMode) {
@@ -304,10 +410,11 @@ export class GameScene extends Phaser.Scene {
       g.lineStyle(2 / zoom, ok ? 0x7dff6a : 0xff4d4d).strokeRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
     }
 
-    if (!this.selection.selectedNest) return;
-    const nest = this.nestCenter;
+    const selected = this.selectedNest;
+    if (!selected) return;
+    const nest = nestCenter(selected);
     g.lineStyle(3 / zoom, 0xffe14d).strokeCircle(nest.x, nest.y, NEST_RADIUS + 5);
-    const r = this.player.rally;
+    const r = selected.rally;
     if (!r) return;
     g.lineStyle(1.5 / zoom, 0xffffff, 0.5).lineBetween(nest.x, nest.y, r.x, r.y);
     g.lineStyle(2, 0xffffff).lineBetween(r.x, r.y, r.x, r.y - 22);

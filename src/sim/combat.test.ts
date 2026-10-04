@@ -91,6 +91,7 @@ describe('nests and victory', () => {
   it('raiders destroy a discovered nest and win the game', () => {
     const state = quietGame();
     const red = getColony(state, 'red');
+    const redNest = red.nests[0];
     const target = nestPoint(state, 'red');
     // Reveal the red nest and park a black strike force next to it.
     const raiders = Array.from({ length: 12 }, (_, i) =>
@@ -101,12 +102,13 @@ describe('nests and victory', () => {
     for (const a of own(state, 'red')) a.x = a.prevX = target.x - 30 * 32 > 0 ? target.x - 30 * 32 : target.x + 30 * 32;
     updateFog(state);
 
-    issueCommand(state, 'black', { type: 'attack', antIds: raiders.map((a) => a.id), target: { nest: 'red' } });
+    issueCommand(state, 'black', { type: 'attack', antIds: raiders.map((a) => a.id), target: { nest: redNest.id } });
     run(state, 20 * 30);
 
-    expect(red.nestHp).toBeLessThan(NEST_MAX_HP);
+    expect(redNest.hp).toBeLessThan(NEST_MAX_HP);
     run(state, 20 * 60);
     expect(red.eliminated).toBe(true);
+    expect(state.ruins).toEqual([{ colony: 'red', tile: redNest.tile }]);
     expect(own(state, 'red')).toHaveLength(0);
     expect(state.winner).toBe('black');
     // The game freezes once decided.
@@ -118,7 +120,8 @@ describe('nests and victory', () => {
   it('cannot raid a nest that has not been found', () => {
     const state = quietGame();
     const soldiers = own(state, 'black', 'soldier');
-    issueCommand(state, 'black', { type: 'attack', antIds: soldiers.map((a) => a.id), target: { nest: 'red' } });
+    const redNest = getColony(state, 'red').nests[0];
+    issueCommand(state, 'black', { type: 'attack', antIds: soldiers.map((a) => a.id), target: { nest: redNest.id } });
     expect(soldiers.every((a) => a.task.kind === 'idle')).toBe(true);
   });
 
@@ -135,7 +138,7 @@ describe('nests and victory', () => {
   it('a nest knocked to zero falls even if it was last bitten long ago', () => {
     const state = quietGame();
     const red = getColony(state, 'red');
-    red.nestHp = 0;
+    red.nests[0].hp = 0;
     run(state, 1);
     expect(red.eliminated).toBe(true);
     expect(state.winner).toBe('black');
@@ -144,10 +147,10 @@ describe('nests and victory', () => {
   it('damaged nests regenerate after a quiet spell', () => {
     const state = quietGame();
     const black = getColony(state, 'black');
-    black.nestHp = 500;
-    black.lastNestHitTick = 0;
+    black.nests[0].hp = 500;
+    black.nests[0].lastHitTick = 0;
     run(state, 20 * 30);
-    expect(black.nestHp).toBeGreaterThan(500);
+    expect(black.nests[0].hp).toBeGreaterThan(500);
   });
 });
 
@@ -160,7 +163,8 @@ describe('AI aggression by difficulty', () => {
     for (let t = 0; t < 20 * 60 * minutes; t++) {
       stepSimulation(state);
       const black = getColony(state, 'black');
-      if (firstHit < 0 && (black.nestHp < NEST_MAX_HP || black.stats.losses > 0)) firstHit = state.tick;
+      const hurt = black.nests.length === 0 || black.nests[0].hp < NEST_MAX_HP || black.stats.losses > 0;
+      if (firstHit < 0 && hurt) firstHit = state.tick;
       if (state.winner) break;
     }
     return { state, firstHitMinutes: firstHit < 0 ? Infinity : firstHit / (20 * 60) };

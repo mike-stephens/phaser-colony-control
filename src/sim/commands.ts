@@ -5,7 +5,8 @@ import { isExploredBy, isVisibleTo } from './fog';
 import { formationSlots } from './formation';
 import { Point, TilePos, worldToTile } from './map';
 import { regionAt } from './regions';
-import { ColonyId, GameState, getColony, nestPoint } from './state';
+import { foundBlocker } from './founding';
+import { ColonyId, GameState, Nest, findNest, getColony, nearestNest, nestCenter } from './state';
 import { EXPLORE_RADIUS, startBuilding, startGathering } from './tasks';
 import { wallPlanBlocker } from './walls';
 
@@ -19,12 +20,14 @@ export type Command =
   | { type: 'gather'; antIds: number[]; foodId: number }
   /** Adjusts how many of the colony's workers gather from one food source. */
   | { type: 'setGatherers'; foodId: number; count: number }
-  /** Queues an ant at the nest, paying its food cost now. */
-  | { type: 'train'; antType: AntType }
+  /** Queues an ant at a nest (default: the main nest), paying its food cost now. */
+  | { type: 'train'; antType: AntType; nestId?: number }
   /** Removes queue[index] and refunds it (cancelling index 0 loses its progress). */
-  | { type: 'cancelTraining'; index: number }
-  /** Where newly hatched ants gather; null resets to the nest. */
-  | { type: 'setRally'; target: Point | null }
+  | { type: 'cancelTraining'; index: number; nestId?: number }
+  /** Where a nest's hatchlings gather; null resets to just outside the nest. */
+  | { type: 'setRally'; target: Point | null; nestId?: number }
+  /** Sends a queen to found a new nest at a tile (must be clear of other nests). */
+  | { type: 'found'; antId: number; target: Point }
   /** Attack a visible enemy ant or creature, or raid an enemy nest you have found. */
   | { type: 'attack'; antIds: number[]; target: AttackTarget }
   /** Mark tiles for wall building. Tiles that can't take a wall are skipped. */
@@ -50,23 +53,36 @@ export function issueCommand(state: GameState, colony: ColonyId, command: Comman
       break;
     case 'train': {
       const c = getColony(state, colony);
-      if (trainBlocker(state, c, command.antType) !== null) break;
+      const nest = ownNest(state, colony, command.nestId);
+      if (!nest || trainBlocker(state, c, nest, command.antType) !== null) break;
       c.food -= ANT_COST[command.antType].food;
-      c.queue.push(command.antType);
+      nest.queue.push(command.antType);
       break;
     }
     case 'cancelTraining': {
-      const c = getColony(state, colony);
-      const type = c.queue[command.index];
-      if (!type) break;
-      c.queue.splice(command.index, 1);
-      c.food += ANT_COST[type].food;
-      if (command.index === 0) c.progress = 0;
+      const nest = ownNest(state, colony, command.nestId);
+      const type = nest?.queue[command.index];
+      if (!nest || !type) break;
+      nest.queue.splice(command.index, 1);
+      getColony(state, colony).food += ANT_COST[type].food;
+      if (command.index === 0) nest.progress = 0;
       break;
     }
-    case 'setRally':
-      getColony(state, colony).rally = command.target ? { ...command.target } : null;
+    case 'setRally': {
+      const nest = ownNest(state, colony, command.nestId);
+      if (nest) nest.rally = command.target ? { ...command.target } : null;
       break;
+    }
+    case 'found': {
+      const queen = state.ants.find((a) => a.id === command.antId && a.colony === colony && a.type === 'queen');
+      const tx = worldToTile(command.target.x);
+      const ty = worldToTile(command.target.y);
+      if (!queen || foundBlocker(state, colony, tx, ty) !== null) break;
+      queen.task = { kind: 'found', target: { x: command.target.x, y: command.target.y }, retries: 0 };
+      queen.path = [];
+      queen.moveTarget = null;
+      break;
+    }
     case 'attack':
       if (!canTarget(state, colony, command.target)) break;
       for (const ant of ownAnts(state, colony, command.antIds)) startAttack(ant, command.target, null, null);
@@ -90,6 +106,12 @@ export function issueCommand(state: GameState, colony: ColonyId, command: Comman
   }
 }
 
+/** One of the colony's own nests by id, or its main nest when no id is given. */
+function ownNest(state: GameState, colony: ColonyId, nestId?: number): Nest | undefined {
+  const nests = getColony(state, colony).nests;
+  return nestId === undefined ? nests[0] : nests.find((n) => n.id === nestId);
+}
+
 /** Workers of `colony` currently assigned to wall building. */
 export function buildersOf(state: GameState, colony: ColonyId): Ant[] {
   return state.ants.filter((a) => a.colony === colony && a.task.kind === 'build');
@@ -99,7 +121,7 @@ export function buildersOf(state: GameState, colony: ColonyId): Ant[] {
 function setBuilders(state: GameState, colony: ColonyId, count: number): void {
   const current = buildersOf(state, colony);
   if (count > current.length) {
-    const nest = nestPoint(state, colony);
+    const nest = nestCenter(getColony(state, colony).nests[0]);
     const availability = (a: Ant) =>
       a.task.kind === 'idle' ? (isMoving(a) ? 1 : 0) : a.task.kind === 'explore' ? 2 : 3;
     const candidates = state.ants
@@ -127,8 +149,8 @@ function canTarget(state: GameState, colony: ColonyId, target: AttackTarget): bo
     const c = state.creatures.find((x) => x.id === target.creature);
     return !!c && isVisibleTo(state, colony, worldToTile(c.x), worldToTile(c.y));
   }
-  const enemy = getColony(state, target.nest);
-  return target.nest !== colony && !enemy.eliminated && isExploredBy(state, colony, enemy.nest.x, enemy.nest.y);
+  const found = findNest(state, target.nest);
+  return !!found && found.colony.id !== colony && isExploredBy(state, colony, found.nest.tile.x, found.nest.tile.y);
 }
 
 /** Workers of `colony` currently assigned to the given food source. */
@@ -227,7 +249,8 @@ function setGatherers(state: GameState, colony: ColonyId, foodId: number, count:
     for (const ant of release) {
       ant.task = { kind: 'idle' };
       ant.path = [];
-      ant.moveTarget = nestPoint(state, colony);
+      const home = nearestNest(state, colony, ant);
+      ant.moveTarget = home ? nestCenter(home) : null;
     }
   }
 }

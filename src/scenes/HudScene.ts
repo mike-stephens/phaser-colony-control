@@ -4,10 +4,11 @@ import { buildersOf, gatherersOf } from '../sim/commands';
 import { isExploredBy } from '../sim/fog';
 import { worldToTile } from '../sim/map';
 import { WALL_PEBBLES, openPlans } from '../sim/walls';
+import { MAX_NESTS, MIN_NEST_SPACING, NEST_MAX_HP } from '../sim/state';
+import { colonyCapacity } from '../sim/underground';
 import {
   ANT_COST,
   MAX_QUEUE,
-  POPULATION_CAP,
   ticksUntilUpkeep,
   trainBlocker,
   upkeepDue,
@@ -19,7 +20,7 @@ import type { GameScene } from './GameScene';
 
 const HELP =
   'Left-click/drag: select ants, food or nest (H)   Right-click (two-finger, Ctrl+click): attack / gather / explore fog / move / rally\n' +
-  'Swipe/wheel, WASD, right-drag: pan   Pinch, Ctrl+wheel, Q/E: zoom   B: build walls   Esc: back / pause';
+  'Swipe/wheel, WASD, right-drag: pan   Pinch/Ctrl+wheel, Q/E: zoom   B: walls   U: underground   Esc: back/pause';
 
 const FOOD_NAMES: Record<FoodKind, string> = {
   crumbs: 'Bread crumbs',
@@ -99,6 +100,10 @@ export class HudScene extends Phaser.Scene {
   private progress!: Phaser.GameObjects.Graphics;
   private nestHint!: Phaser.GameObjects.Text;
 
+  private queenPanel!: Phaser.GameObjects.Container;
+  private queenInfo!: Phaser.GameObjects.Text;
+  private foundButton!: Button;
+
   private buildPanel!: Phaser.GameObjects.Container;
   private buildInfo!: Phaser.GameObjects.Text;
 
@@ -126,6 +131,7 @@ export class HudScene extends Phaser.Scene {
     this.help = this.add.text(10, 0, HELP, TEXT_STYLE).setOrigin(0, 1);
     this.createFoodPanel();
     this.createNestPanel();
+    this.createQueenPanel();
     this.createBuildPanel();
     this.createPauseMenu();
     this.createGameOver();
@@ -142,7 +148,10 @@ export class HudScene extends Phaser.Scene {
   /** Lets the game scene ignore clicks that land on HUD controls. */
   isOverUi(sx: number, sy: number): boolean {
     if (this.gameOver?.visible || this.pauseMenu?.visible) return true;
-    return [this.foodPanel, this.nestPanel, this.buildPanel].some((p) => p?.visible && p.getBounds().contains(sx, sy));
+    if (this.scene.isActive('Underground')) return true;
+    return [this.foodPanel, this.nestPanel, this.buildPanel, this.queenPanel].some(
+      (p) => p?.visible && p.getBounds().contains(sx, sy),
+    );
   }
 
   /** Brief message at the top of the screen. */
@@ -169,12 +178,12 @@ export class HudScene extends Phaser.Scene {
     const due = upkeepDue(state, player.id);
     this.status.setText(
       `${clock(state.tick)}${game.paused ? ' PAUSED' : ''}  [${state.difficulty}]   Food: ${player.food}   Eats ${due} every ${seconds(UPKEEP_INTERVAL_TICKS)}s (next in ${seconds(ticksUntilUpkeep(state))}s)   ` +
-        `Ants: ${total}/${POPULATION_CAP}  W${own.worker} S${own.soldier} Q${own.queen}   Idle workers: ${idleWorkers}` +
+        `Ants: ${total}/${colonyCapacity(player)}  W${own.worker} S${own.soldier} Q${own.queen}   Idle workers: ${idleWorkers}` +
         (selectedCount > 0 ? `   Selected: ${selectedCount}` : ''),
     );
     this.starving.setVisible(player.starving);
 
-    const nestHit = state.tick - player.lastNestHitTick < ALERT_TICKS;
+    const nestHit = player.nests.some((n) => state.tick - n.lastHitTick < ALERT_TICKS);
     const antsHit = state.tick - player.lastAntHitTick < ALERT_TICKS;
     this.alert
       .setText(nestHit ? 'Your nest is under attack! (H to jump home)' : 'Your ants are under attack!')
@@ -182,6 +191,7 @@ export class HudScene extends Phaser.Scene {
 
     this.updateGameOver();
     this.updateBuildPanel(own.worker);
+    this.updateQueenPanel();
     this.pauseMenu.setVisible(game.paused && state.winner === null);
     if (this.toastText.visible && this.time.now > this.toastUntil) this.toastText.setVisible(false);
 
@@ -221,61 +231,106 @@ export class HudScene extends Phaser.Scene {
   // ---------------------------------------------------------------- nest panel
 
   private createNestPanel(): void {
-    this.nestInfo = this.add.text(0, 0, '', PLAIN);
+    this.nestInfo = this.add.text(0, 0, '', { ...PLAIN, lineSpacing: 2 });
+    const nestId = () => this.game_.selection.selectedNest ?? undefined;
     this.trainButtons = TRAINABLE.map(
-      (type, i) => new Button(this, i * 110, 30, '', () => this.game_.issue({ type: 'train', antType: type })),
+      (type, i) =>
+        new Button(this, i * 110, 44, '', () => this.game_.issue({ type: 'train', antType: type, nestId: nestId() })),
     );
     this.queueButtons = Array.from(
       { length: MAX_QUEUE },
-      (_, i) => new Button(this, i * 64, 92, '', () => this.game_.issue({ type: 'cancelTraining', index: i })),
+      (_, i) =>
+        new Button(this, i * 64, 106, '', () => this.game_.issue({ type: 'cancelTraining', index: i, nestId: nestId() })),
     );
     this.progress = this.add.graphics();
-    this.nestHint = this.add.text(0, 124, '', { ...PLAIN, color: '#bbbbbb', fontSize: '12px' });
-    const walls = new Button(this, 0, 146, 'Build walls (B)', () => this.game_.setBuildMode(true));
-    const bg = this.panelBackground(184);
+    this.nestHint = this.add.text(0, 138, '', { ...PLAIN, color: '#bbbbbb', fontSize: '12px' });
+    const walls = new Button(this, 0, 162, 'Walls (B)', () => this.game_.setBuildMode(true));
+    const underground = new Button(this, 110, 162, 'Underground (U)', () => this.game_.openUnderground());
+    const bg = this.panelBackground(202);
     this.nestPanel = this.add
       .container(0, 0, [
         bg,
         this.nestInfo,
         ...this.trainButtons.map((b) => b.text),
-        this.add.text(0, 64, 'Training (click to cancel):', { ...PLAIN, fontSize: '12px', color: '#bbbbbb' }),
+        this.add.text(0, 78, 'Training (click to cancel):', { ...PLAIN, fontSize: '12px', color: '#bbbbbb' }),
         ...this.queueButtons.map((b) => b.text),
         this.progress,
         this.nestHint,
         walls.text,
+        underground.text,
       ])
       .setVisible(false);
   }
 
   private updateNestPanel(population: number): void {
-    const { state, player, selection } = this.game_;
-    this.nestPanel.setVisible(selection.selectedNest && !player.eliminated && state.winner === null);
-    if (!this.nestPanel.visible) return;
+    const game = this.game_;
+    const { state, player } = game;
+    const nest = game.selectedNest;
+    this.nestPanel.setVisible(!!nest && !player.eliminated && state.winner === null);
+    if (!nest) return;
 
-    this.nestInfo.setText(`Black colony nest          Ants ${population}/${POPULATION_CAP}`);
+    const index = player.nests.indexOf(nest) + 1;
+    const digging = nest.underground.dig ? '  (digging)' : '';
+    this.nestInfo.setText(
+      `Nest ${index} of ${player.nests.length}   HP ${Math.round(nest.hp)}/${NEST_MAX_HP}\n` +
+        `Colony: ${population}/${colonyCapacity(player)} ants${digging}`,
+    );
     TRAINABLE.forEach((type, i) => {
-      const blocked = trainBlocker(state, player, type);
+      const blocked = trainBlocker(state, player, nest, type);
       this.trainButtons[i].set(`${ANT_NAMES[type]} ${ANT_COST[type].food}`, blocked === null);
     });
 
     this.progress.clear();
     this.queueButtons.forEach((btn, i) => {
-      const type = player.queue[i];
+      const type = nest.queue[i];
       btn.set(type ? ANT_NAMES[type].slice(0, 4) : '', true, !!type);
     });
-    const current = player.queue[0];
+    const current = nest.queue[0];
     if (current) {
-      const frac = Math.min(1, player.progress / ANT_COST[current].ticks);
+      const frac = Math.min(1, nest.progress / ANT_COST[current].ticks);
       const w = this.queueButtons[0].text.width;
-      this.progress.fillStyle(0x000000, 0.8).fillRect(0, 118, w, 4);
-      this.progress.fillStyle(ACCENT).fillRect(0, 118, w * frac, 4);
+      this.progress.fillStyle(0x000000, 0.8).fillRect(0, 132, w, 4);
+      this.progress.fillStyle(ACCENT).fillRect(0, 132, w * frac, 4);
     }
 
-    const hint = player.queue.length === 0 ? 'Nothing training. ' : '';
-    const blockedAll = trainBlocker(state, player, 'worker');
-    this.nestHint.setText(
-      `${hint}${blockedAll && blockedAll !== 'Not enough food' ? blockedAll + '. ' : ''}Right-click the map to set the rally point.`,
-    );
+    const blocked = trainBlocker(state, player, nest, 'worker');
+    const note = blocked && blocked !== 'Not enough food' ? `${blocked}. ` : nest.queue.length === 0 ? 'Idle. ' : '';
+    this.nestHint.setText(`${note}Right-click: rally point.  H: next nest`);
+  }
+
+  // ---------------------------------------------------------------- queen panel
+
+  private createQueenPanel(): void {
+    this.queenInfo = this.add.text(0, 0, '', { ...PLAIN, lineSpacing: 2 });
+    this.foundButton = new Button(this, 0, 64, '', () => {
+      const game = this.game_;
+      game.setFoundMode(!game.selection.foundMode);
+    });
+    const bg = this.panelBackground(104);
+    this.queenPanel = this.add.container(0, 0, [bg, this.queenInfo, this.foundButton.text]).setVisible(false);
+  }
+
+  private updateQueenPanel(): void {
+    const game = this.game_;
+    const queens = game.selectedQueens;
+    const show = queens.length > 0 && game.state.winner === null && !game.selection.buildMode;
+    this.queenPanel.setVisible(show && !this.nestPanel.visible && !this.foodPanel.visible);
+    if (!this.queenPanel.visible) return;
+    const atLimit = game.player.nests.length >= MAX_NESTS;
+    if (game.selection.foundMode) {
+      this.queenInfo.setText(
+        `Click a site ${MIN_NEST_SPACING}+ tiles from every nest\n(outside the red circles; green = OK)`,
+      );
+      this.foundButton.set(' Cancel (Esc) ', true);
+    } else {
+      const founding = queens.some((q) => q.task.kind === 'found');
+      this.queenInfo.setText(
+        `${queens.length} queen${queens.length > 1 ? 's' : ''} selected` +
+          (founding ? ' (on her way to found a nest)' : '') +
+          `\nNests: ${game.player.nests.length}/${MAX_NESTS}`,
+      );
+      this.foundButton.set(atLimit ? ' Nest limit reached ' : ' Found new nest (F) ', !atLimit);
+    }
   }
 
   // ---------------------------------------------------------------- build panel
@@ -407,6 +462,7 @@ export class HudScene extends Phaser.Scene {
     const x = this.scale.width - PANEL_WIDTH;
     this.foodPanel.setPosition(x, 80);
     this.nestPanel.setPosition(x, 80);
+    this.queenPanel.setPosition(x, 80);
     this.buildPanel.setPosition(x, 80);
     this.toastText.setPosition(width / 2, 110);
     this.pauseMenu.setPosition(width / 2, height / 2);
