@@ -3,7 +3,7 @@ import { MenuScene } from './scenes/MenuScene';
 import { GameScene } from './scenes/GameScene';
 import { HudScene } from './scenes/HudScene';
 
-new Phaser.Game({
+const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
   backgroundColor: '#1a1a1a',
@@ -14,3 +14,6 @@ new Phaser.Game({
   },
   scene: [MenuScene, GameScene, HudScene],
 });
+
+// Debug handle for the browser console and automated checks; dev builds only.
+if (import.meta.env.DEV) (window as unknown as { game: Phaser.Game }).game = game;

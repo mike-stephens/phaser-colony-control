@@ -27,7 +27,8 @@ Works with a trackpad or a mouse.
 |---|---|
 | Left-click an ant | Select it (Shift+click toggles it in the selection) |
 | Left-drag | Box-select your ants (Shift adds to the selection) |
-| Right-click / two-finger click / Ctrl+click | Move selected ants there |
+| Left-click a food source | Select it; use **−** / **+** in the panel to set how many workers gather it |
+| Right-click / two-finger click / Ctrl+click | Order selected ants: on **food** gather it, in **black fog** explore that area, otherwise move |
 | Two-finger swipe, mouse wheel, WASD / arrows, right- or middle-drag | Pan |
 | Pinch, Ctrl+wheel, Q / E | Zoom |
 | Esc | Clear the selection (press again for the menu) |
@@ -37,7 +38,7 @@ Works with a trackpad or a mouse.
 - [x] **Phase 0:** project scaffold, start screen, seeded random map, camera
 - [ ] **Phase 1:** better map generation (noise-based terrain), minimap
 - [x] **Phase 2:** ant units, group selection, move orders, A* pathfinding
-- [ ] **Phase 3:** fog of war, exploring, food sources, gathering with worker counts
+- [x] **Phase 3:** fog of war, exploring, food sources, gathering with worker counts
 - [ ] **Phase 4:** colony economy: food stockpile, spawning, upkeep
 - [ ] **Phase 5:** combat, soldiers, red AI colony (easy / medium / hard), win/lose
 - [ ] **Phase 6:** neutral creatures (spiders), pebble walls, save/load

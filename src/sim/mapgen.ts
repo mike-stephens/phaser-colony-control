@@ -1,10 +1,18 @@
 import { Rng } from './rng';
+import { FOOD_AMOUNTS, FoodKind } from './food';
 import { GameMap, Terrain, TilePos, inBounds, isWalkable } from './map';
+
+export interface FoodSite {
+  tile: TilePos;
+  kind: FoodKind;
+  amount: number;
+}
 
 export interface GeneratedWorld {
   map: GameMap;
   /** Nest locations, one per colony. Index 0 is the player. */
   nestSites: TilePos[];
+  foodSites: FoodSite[];
 }
 
 /**
@@ -27,7 +35,50 @@ export function generateWorld(seed: number, width: number, height: number): Gene
     paintCircle(map, site.x, site.y, 4, Terrain.Dirt);
   }
 
-  return { map, nestSites };
+  const foodSites = placeFood(map, rng, nestSites);
+  return { map, nestSites, foodSites };
+}
+
+const FOOD_KINDS: FoodKind[] = ['crumbs', 'seeds', 'berries'];
+/** Food sources guaranteed close to each nest, so neither side starts starved. */
+const STARTER_FOOD_PER_NEST = 2;
+
+function placeFood(map: GameMap, rng: Rng, nests: TilePos[]): FoodSite[] {
+  const sites: FoodSite[] = [];
+  const dist = (a: TilePos, b: TilePos) => Math.hypot(a.x - b.x, a.y - b.y);
+  const open = (t: TilePos) =>
+    [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dy]) => isWalkable(map, t.x + dx, t.y + dy));
+  const add = (tile: TilePos, kind: FoodKind) => {
+    const [min, max] = FOOD_AMOUNTS[kind];
+    sites.push({ tile, kind, amount: rng.int(min, max) });
+  };
+
+  for (const nest of nests) {
+    let placed = 0;
+    for (let attempt = 0; attempt < 500 && placed < STARTER_FOOD_PER_NEST; attempt++) {
+      const angle = rng.next() * Math.PI * 2;
+      // Within NEST_SIGHT so the player can see their first food from the start.
+      const r = rng.int(5, 7);
+      const tile = { x: Math.round(nest.x + Math.cos(angle) * r), y: Math.round(nest.y + Math.sin(angle) * r) };
+      if (open(tile) && sites.every((s) => dist(s.tile, tile) >= 4)) {
+        add(tile, placed === 0 ? 'crumbs' : 'seeds');
+        placed++;
+      }
+    }
+  }
+
+  const target = sites.length + Math.round((map.width * map.height) / 600);
+  for (let attempt = 0; attempt < 5000 && sites.length < target; attempt++) {
+    const tile = { x: rng.int(2, map.width - 3), y: rng.int(2, map.height - 3) };
+    if (
+      open(tile) &&
+      nests.every((n) => dist(n, tile) >= 10) &&
+      sites.every((s) => dist(s.tile, tile) >= 6)
+    ) {
+      add(tile, rng.pick(FOOD_KINDS));
+    }
+  }
+  return sites;
 }
 
 function scatterBlobs(

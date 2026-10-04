@@ -2,24 +2,36 @@ import Phaser from 'phaser';
 import { ANT_STATS } from '../sim/ants';
 import { Point } from '../sim/map';
 import type { ColonyId, GameState } from '../sim/state';
+import { DEPTH } from '../render/depths';
 import { CameraController } from './CameraController';
 
 /** Screen pixels the pointer must travel before a press counts as a drag. */
 const DRAG_THRESHOLD = 6;
 const BOX_COLOR = 0x7dff6a;
-const DEPTH_OVERLAY = 10;
 
 type Gesture = 'none' | 'select' | 'command';
 
+export interface SelectionOptions {
+  colony: ColonyId;
+  getState: () => GameState;
+  /** Handles a right-click order; returns the marker colour to flash, or null if nothing happened. */
+  onCommand: (antIds: number[], target: Point) => number | null;
+  /** Food source under a world point that this player may interact with. */
+  foodAt: (p: Point) => number | null;
+  /** True when a screen point is over HUD UI, so the click is not for the world. */
+  isOverUi: (sx: number, sy: number) => boolean;
+}
+
 /**
  * Mouse/trackpad unit control:
- *   left-click             select one ant (Shift toggles it in the selection)
+ *   left-click             select one ant (Shift toggles it), or a food source
  *   left-drag              box-select (Shift adds to the selection)
- *   right-click / two-finger click / Ctrl+click   move selected ants here
+ *   right-click / two-finger click / Ctrl+click   order selected ants
  *   right- or middle-drag  pan the camera
  */
 export class SelectionController {
   readonly selected = new Set<number>();
+  selectedFood: number | null = null;
   private gesture: Gesture = 'none';
   private start = new Phaser.Math.Vector2();
   private dragging = false;
@@ -28,11 +40,9 @@ export class SelectionController {
   constructor(
     private scene: Phaser.Scene,
     private camera: CameraController,
-    private getState: () => GameState,
-    private colony: ColonyId,
-    private onMove: (antIds: number[], target: Point) => void,
+    private opts: SelectionOptions,
   ) {
-    this.box = scene.add.graphics().setDepth(DEPTH_OVERLAY);
+    this.box = scene.add.graphics().setDepth(DEPTH.overlay);
     scene.input.mouse?.disableContextMenu();
     scene.input.on('pointerdown', this.onDown, this);
     scene.input.on('pointermove', this.onMoveEvent, this);
@@ -44,18 +54,32 @@ export class SelectionController {
     });
   }
 
-  clear(): void {
-    this.selected.clear();
+  get hasSelection(): boolean {
+    return this.selected.size > 0 || this.selectedFood !== null;
   }
 
-  /** Drops ids of ants that no longer exist. */
+  clear(): void {
+    this.selected.clear();
+    this.selectedFood = null;
+  }
+
+  /** Drops selections whose ants or food no longer exist. */
   prune(): void {
-    if (this.selected.size === 0) return;
-    const alive = new Set(this.getState().ants.map((a) => a.id));
-    for (const id of this.selected) if (!alive.has(id)) this.selected.delete(id);
+    const state = this.opts.getState();
+    if (this.selected.size > 0) {
+      const alive = new Set(state.ants.map((a) => a.id));
+      for (const id of this.selected) if (!alive.has(id)) this.selected.delete(id);
+    }
+    if (this.selectedFood !== null && !state.food.some((f) => f.id === this.selectedFood)) {
+      this.selectedFood = null;
+    }
   }
 
   private onDown(p: Phaser.Input.Pointer): void {
+    if (this.opts.isOverUi(p.x, p.y)) {
+      this.gesture = 'none';
+      return;
+    }
     const ev = p.event as MouseEvent;
     // On a Mac, Ctrl+click is the conventional right-click.
     const isCommand = p.button === 2 || p.button === 1 || (p.button === 0 && ev.ctrlKey);
@@ -88,8 +112,8 @@ export class SelectionController {
       const ids = [...this.selected];
       if (ids.length > 0) {
         const target = this.camera.screenToWorld(p.x, p.y);
-        this.onMove(ids, target);
-        this.showMoveMarker(target);
+        const color = this.opts.onCommand(ids, target);
+        if (color !== null) this.showMarker(target, color);
       }
     } else if (gesture === 'select') {
       if (this.dragging) this.selectInBox(p.x, p.y, ev.shiftKey);
@@ -117,8 +141,9 @@ export class SelectionController {
     const [x0, x1] = [Math.min(a.x, b.x), Math.max(a.x, b.x)];
     const [y0, y1] = [Math.min(a.y, b.y), Math.max(a.y, b.y)];
     if (!additive) this.selected.clear();
-    for (const ant of this.getState().ants) {
-      if (ant.colony === this.colony && ant.x >= x0 && ant.x <= x1 && ant.y >= y0 && ant.y <= y1) {
+    this.selectedFood = null;
+    for (const ant of this.opts.getState().ants) {
+      if (ant.colony === this.opts.colony && ant.x >= x0 && ant.x <= x1 && ant.y >= y0 && ant.y <= y1) {
         this.selected.add(ant.id);
       }
     }
@@ -130,8 +155,8 @@ export class SelectionController {
     const slop = 4 / this.camera.camera.zoom;
     let best: number | null = null;
     let bestDist = Infinity;
-    for (const ant of this.getState().ants) {
-      if (ant.colony !== this.colony) continue;
+    for (const ant of this.opts.getState().ants) {
+      if (ant.colony !== this.opts.colony) continue;
       const d = Math.hypot(ant.x - w.x, ant.y - w.y);
       if (d <= ANT_STATS[ant.type].radius + slop && d < bestDist) {
         best = ant.id;
@@ -139,17 +164,29 @@ export class SelectionController {
       }
     }
 
+    if (best === null) {
+      // No ant here: select a food source instead (replacing the ant selection).
+      const food = this.opts.foodAt(w);
+      if (food !== null) {
+        this.selected.clear();
+        this.selectedFood = food;
+      } else if (!toggle) {
+        this.clear();
+      }
+      return;
+    }
+
+    this.selectedFood = null;
     if (!toggle) this.selected.clear();
-    if (best === null) return;
     if (toggle && this.selected.has(best)) this.selected.delete(best);
     else this.selected.add(best);
   }
 
-  private showMoveMarker(at: Point): void {
+  private showMarker(at: Point, color: number): void {
     const ring = this.scene.add
       .circle(at.x, at.y, 10)
-      .setStrokeStyle(2 / this.camera.camera.zoom, BOX_COLOR)
-      .setDepth(DEPTH_OVERLAY);
+      .setStrokeStyle(2 / this.camera.camera.zoom, color)
+      .setDepth(DEPTH.overlay);
     this.scene.tweens.add({
       targets: ring,
       scale: 0.3,

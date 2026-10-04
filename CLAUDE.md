@@ -8,6 +8,9 @@ SimAnt-style RTS in Phaser 4 + TypeScript + Vite. See README.md for the roadmap.
 - **`src/scenes/`, `src/render/`, `src/input/` are the Phaser side.** They read `GameState` and turn input into `Command`s (`src/sim/commands.ts`); they never change game state directly. UI-only state (current selection, camera) lives here, not in `GameState`.
 - The simulation advances in fixed `TICK_MS` steps (`src/sim/simulation.ts`); rendering interpolates between ticks using each ant's `prevX/prevY`.
 - Pathfinding: A* on tiles (`src/sim/pathfinding.ts`), budgeted per tick by node count. Path requests are queued on `ant.moveTarget`. Reachability uses precomputed regions (`src/sim/regions.ts`), so call `invalidateRegions(map)` after any change to terrain.
+- Ant behaviour beyond walking lives in `ant.task` (`idle` / `explore` / `gather`), advanced each tick by `src/sim/tasks.ts`. Simulation randomness uses `state.rngState` so games replay deterministically.
+- Fog of war is per colony: `state.fog[colony]` is the saved explored grid; current visibility is derived each tick (`src/sim/fog.ts`). Commands must respect fog (e.g. you can only gather food you have explored) so the AI can't cheat.
+- In dev builds `window.game` is the Phaser.Game, for console poking and automated browser checks.
 - HUD text belongs in `HudScene` (its own camera) so it doesn't zoom with the world.
 - **All randomness goes through `Rng` (`src/sim/rng.ts`)** so a seed reproduces a game. Never use `Math.random()` inside `src/sim/`.
 - The world is a tile grid (`TILE_SIZE` px per tile, see `src/config.ts`). Terrain, pathfinding, fog of war and resources all key off tile coordinates; units move in continuous world pixels.

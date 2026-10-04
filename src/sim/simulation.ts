@@ -1,7 +1,10 @@
 import { ANT_STATS, Ant } from './ants';
+import { updateFog } from './fog';
 import { Point, tileCenter, worldToTile } from './map';
 import { findPath, smoothPath } from './pathfinding';
+import { Rng } from './rng';
 import { GameState } from './state';
+import { updateTasks } from './tasks';
 
 /** Fixed simulation step. Rendering interpolates between steps. */
 export const TICK_MS = 50;
@@ -15,12 +18,16 @@ const PATH_NODE_BUDGET = 40_000;
 
 export function stepSimulation(state: GameState): void {
   state.tick++;
+  const rng = new Rng(state.rngState);
+  updateTasks(state, rng);
   processPathRequests(state);
   for (const ant of state.ants) {
     ant.prevX = ant.x;
     ant.prevY = ant.y;
     walk(ant, (ANT_STATS[ant.type].speed * TICK_MS) / 1000);
   }
+  updateFog(state);
+  state.rngState = rng.state;
 }
 
 function processPathRequests(state: GameState): void {

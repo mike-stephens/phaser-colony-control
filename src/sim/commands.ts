@@ -1,30 +1,56 @@
-import { Ant } from './ants';
+import { Ant, isMoving } from './ants';
+import { isExploredBy } from './fog';
 import { formationSlots } from './formation';
 import { Point, worldToTile } from './map';
 import { regionAt } from './regions';
-import { ColonyId, GameState } from './state';
+import { ColonyId, GameState, nestPoint } from './state';
+import { EXPLORE_RADIUS, startGathering } from './tasks';
 
 /**
  * Orders that a colony can give its ants. The player's input and the AI
  * opponent both go through issueCommand, so neither has special powers.
  */
-export type Command = { type: 'move'; antIds: number[]; target: Point };
+export type Command =
+  | { type: 'move'; antIds: number[]; target: Point }
+  | { type: 'explore'; antIds: number[]; target: Point }
+  | { type: 'gather'; antIds: number[]; foodId: number }
+  /** Adjusts how many of the colony's workers gather from one food source. */
+  | { type: 'setGatherers'; foodId: number; count: number };
 
 export function issueCommand(state: GameState, colony: ColonyId, command: Command): void {
   switch (command.type) {
     case 'move':
-      issueMove(state, colony, command.antIds, command.target);
+      issueMove(state, ownAnts(state, colony, command.antIds), command.target);
+      break;
+    case 'explore':
+      issueExplore(state, ownAnts(state, colony, command.antIds), command.target);
+      break;
+    case 'gather':
+      issueGather(state, colony, ownAnts(state, colony, command.antIds), command.foodId);
+      break;
+    case 'setGatherers':
+      setGatherers(state, colony, command.foodId, command.count);
       break;
   }
 }
 
-function issueMove(state: GameState, colony: ColonyId, antIds: number[], target: Point): void {
-  const ids = new Set(antIds);
-  const ants = state.ants.filter((a) => ids.has(a.id) && a.colony === colony);
+/** Workers of `colony` currently assigned to the given food source. */
+export function gatherersOf(state: GameState, colony: ColonyId, foodId: number): Ant[] {
+  return state.ants.filter(
+    (a) => a.colony === colony && a.task.kind === 'gather' && a.task.foodId === foodId,
+  );
+}
 
+function ownAnts(state: GameState, colony: ColonyId, antIds: number[]): Ant[] {
+  const ids = new Set(antIds);
+  return state.ants.filter((a) => ids.has(a.id) && a.colony === colony);
+}
+
+function issueMove(state: GameState, ants: Ant[], target: Point): void {
   // Ants on different islands can't share a formation; group them by region.
   const byRegion = new Map<number, Ant[]>();
   for (const ant of ants) {
+    ant.task = { kind: 'idle' };
     const region = regionAt(state.map, worldToTile(ant.x), worldToTile(ant.y));
     if (region < 0) continue;
     const group = byRegion.get(region) ?? [];
@@ -42,6 +68,70 @@ function issueMove(state: GameState, colony: ColonyId, antIds: number[], target:
       ant.moveTarget = slot;
       ant.path = [];
     });
+  }
+}
+
+function issueExplore(_state: GameState, ants: Ant[], target: Point): void {
+  for (const ant of ants) {
+    ant.task = { kind: 'explore', center: { ...target }, radius: EXPLORE_RADIUS };
+    ant.path = [];
+    ant.moveTarget = null;
+  }
+}
+
+function findKnownFood(state: GameState, colony: ColonyId, foodId: number) {
+  const food = state.food.find((f) => f.id === foodId);
+  if (!food || !isExploredBy(state, colony, worldToTile(food.x), worldToTile(food.y))) return null;
+  return food;
+}
+
+function issueGather(state: GameState, colony: ColonyId, ants: Ant[], foodId: number): void {
+  const food = findKnownFood(state, colony, foodId);
+  if (!food) return;
+  const foodRegion = regionAt(state.map, worldToTile(food.x), worldToTile(food.y));
+  const workers = ants.filter(
+    (a) => a.type === 'worker' && regionAt(state.map, worldToTile(a.x), worldToTile(a.y)) === foodRegion,
+  );
+  for (const w of workers) startGathering(w, food);
+  // Anything that can't carry food (soldiers, queens) escorts the workers instead.
+  const others = ants.filter((a) => !workers.includes(a));
+  if (others.length > 0) issueMove(state, others, { x: food.x, y: food.y });
+}
+
+/**
+ * Picks the most available workers to reach `count` gatherers: idle ants
+ * first, then explorers, then ants gathering elsewhere; nearest first within
+ * each group. Lowering the count sends the extra ants home.
+ */
+function setGatherers(state: GameState, colony: ColonyId, foodId: number, count: number): void {
+  const food = findKnownFood(state, colony, foodId);
+  if (!food) return;
+  const current = gatherersOf(state, colony, foodId);
+
+  if (count > current.length) {
+    const foodRegion = regionAt(state.map, worldToTile(food.x), worldToTile(food.y));
+    const availability = (a: Ant) =>
+      a.task.kind === 'idle' ? (isMoving(a) ? 1 : 0) : a.task.kind === 'explore' ? 2 : 3;
+    const candidates = state.ants
+      .filter(
+        (a) =>
+          a.colony === colony &&
+          a.type === 'worker' &&
+          !current.includes(a) &&
+          regionAt(state.map, worldToTile(a.x), worldToTile(a.y)) === foodRegion,
+      )
+      .sort((a, b) => availability(a) - availability(b) || dist2(a, food) - dist2(b, food) || a.id - b.id);
+    for (const ant of candidates.slice(0, count - current.length)) startGathering(ant, food);
+  } else if (count < current.length) {
+    // Release ants that are empty-handed and furthest away first.
+    const release = [...current]
+      .sort((a, b) => a.carrying - b.carrying || dist2(b, food) - dist2(a, food) || a.id - b.id)
+      .slice(0, current.length - Math.max(count, 0));
+    for (const ant of release) {
+      ant.task = { kind: 'idle' };
+      ant.path = [];
+      ant.moveTarget = nestPoint(state, colony);
+    }
   }
 }
 
