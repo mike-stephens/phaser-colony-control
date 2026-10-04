@@ -30,3 +30,4 @@ SimAnt-style RTS in Phaser 4 + TypeScript + Vite. See README.md for the roadmap.
 - `npm run dev`: dev server
 - `npm test`: Vitest unit tests for `src/sim/`
 - `npm run typecheck` / `npm run build`
+- `npm run playtest`: scripted playthroughs (`src/sim/playtest/`, not part of `npm test`). Run it after combat/AI/economy balance changes and compare how many attack waves destroy their nest.

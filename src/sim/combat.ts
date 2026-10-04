@@ -22,6 +22,8 @@ const RETALIATE_DIST = 4 * TILE_SIZE;
  * come first.
  */
 const WORKER_TARGET_PENALTY = 4 * TILE_SIZE;
+/** Raiders still turn on enemy fighters (not workers) that come this close (px). */
+const RAID_THREAT_RANGE = 2.5 * TILE_SIZE;
 /** A self-started chase of a faster ant is dropped once it gets this far (px) out of reach. */
 const OUTRUN_GAP = 3 * TILE_SIZE;
 /** Ticks between chase re-paths. */
@@ -66,8 +68,10 @@ export function startAttack(ant: Ant, target: AttackTarget, then: Task | null, l
 
 /**
  * Idle soldiers (and explorers and attack-movers) attack the nearest visible
- * threat in aggro range, preferring fighters over workers. Raiders sent at a
- * nest stay focused on it and only fight back when bitten. Idle ants of any
+ * threat in aggro range, preferring fighters over workers, and with nothing
+ * else around, an enemy nest. Raiders sent at a nest stay on it, ignoring
+ * workers, but fight enemy soldiers that close in or anything that bites
+ * them, then go back to the nest. Idle ants of any
  * type fight back when bitten. Gatherers and builders keep working, and a
  * plain move order is never interrupted, so the player can always retreat.
  */
@@ -89,15 +93,44 @@ function seekFight(state: GameState, ant: Ant, lookup: Lookup): void {
     ant.lastAttacker = null;
   }
   const aggro = ANT_STATS[ant.type].aggroRange * TILE_SIZE;
-  if (!target && aggro > 0 && !raiding) target = nearestVisibleEnemy(state, ant, aggro);
+  if (!target && raiding) {
+    // Stay on the nest, but don't stand there while enemy soldiers chew on the squad.
+    target = nearestVisibleEnemy(state, ant, RAID_THREAT_RANGE, { fightersOnly: true });
+  } else if (!target && aggro > 0) {
+    target = nearestVisibleEnemy(state, ant, aggro);
+    // With no ants or creatures to fight, idle guards and attack-movers go for
+    // an enemy nest in range (like attack-move hitting buildings in StarCraft).
+    if (!target && (task.kind === 'idle' || task.kind === 'attackMove')) target = nearestKnownEnemyNest(state, ant, aggro);
+  }
   if (target) startAttack(ant, target, task, { x: ant.x, y: ant.y });
+}
+
+function nearestKnownEnemyNest(state: GameState, ant: Ant, range: number): AttackTarget | null {
+  let best: AttackTarget | null = null;
+  let bestDist = range + NEST_RADIUS;
+  for (const colony of state.colonies) {
+    if (colony.id === ant.colony) continue;
+    for (const nest of colony.nests) {
+      const d = dist(ant, nestCenter(nest));
+      if (d < bestDist && isVisibleTo(state, ant.colony, nest.tile.x, nest.tile.y)) {
+        best = { nest: nest.id };
+        bestDist = d;
+      }
+    }
+  }
+  return best;
 }
 
 /**
  * The visible enemy ant or wild creature in range that most needs fighting:
  * nearest first, but with workers ranked as if farther away.
  */
-export function nearestVisibleEnemy(state: GameState, ant: Ant, range: number): AttackTarget | null {
+export function nearestVisibleEnemy(
+  state: GameState,
+  ant: Ant,
+  range: number,
+  opts: { fightersOnly?: boolean } = {},
+): AttackTarget | null {
   let best: AttackTarget | null = null;
   let bestScore = Infinity;
   const consider = (p: Point, target: AttackTarget, penalty: number) => {
@@ -108,7 +141,7 @@ export function nearestVisibleEnemy(state: GameState, ant: Ant, range: number): 
     bestScore = d + penalty;
   };
   for (const other of state.ants) {
-    if (other.colony !== ant.colony && other.hp > 0) {
+    if (other.colony !== ant.colony && other.hp > 0 && !(opts.fightersOnly && other.type === 'worker')) {
       consider(other, { ant: other.id }, other.type === 'worker' ? WORKER_TARGET_PENALTY : 0);
     }
   }
@@ -166,7 +199,13 @@ function runAttack(state: GameState, ant: Ant, task: AttackTask, lookup: Lookup)
       return;
     }
   }
-  if (d <= reach) {
+
+  // Nests are big: each attacker gets its own spot around the mound so a squad
+  // surrounds it instead of queueing up on one side. It bites once it reaches
+  // its spot, or as soon as it's within reach and can't get any closer.
+  const slot = 'nest' in task.target ? nestSlot(state, ant, pos, reach) : null;
+  const inRange = slot ? dist(ant, slot) <= 10 || (d <= reach && !isMoving(ant)) : d <= reach;
+  if (inRange) {
     ant.path = [];
     ant.moveTarget = null;
     ant.blockedWall = null;
@@ -181,15 +220,24 @@ function runAttack(state: GameState, ant: Ant, task: AttackTask, lookup: Lookup)
   const chasingMover = !('nest' in task.target);
   if (!isMoving(ant) || (chasingMover && state.tick >= task.repathTick)) {
     task.repathTick = state.tick + REPATH_TICKS + (ant.id % REPATH_TICKS);
+    const goal = slot ?? { x: pos.x, y: pos.y };
     // Close and in the open: walk straight at it instead of running A*.
     const wallBlocked = (px: number, py: number) => blocks(state, ant.colony, tileIndex(state, px, py));
-    if (d < 4 * TILE_SIZE && hasLineOfSight(state.map, ant, pos, stats.radius, wallBlocked)) {
-      ant.path = [{ x: pos.x, y: pos.y }];
+    if (d < 4 * TILE_SIZE && hasLineOfSight(state.map, ant, goal, stats.radius, wallBlocked)) {
+      ant.path = [goal];
       ant.moveTarget = null;
     } else {
-      ant.moveTarget = { x: pos.x, y: pos.y };
+      ant.moveTarget = goal;
     }
   }
+}
+
+/** This ant's spot on a ring just inside biting reach of a nest (falls back to the centre). */
+function nestSlot(state: GameState, ant: Ant, center: Point, reach: number): Point {
+  const angle = ant.id * 2.39996;
+  const r = reach - 3;
+  const p = { x: center.x + Math.cos(angle) * r, y: center.y + Math.sin(angle) * r };
+  return isWalkableWorld(state.map, p.x, p.y) ? p : center;
 }
 
 function bite(state: GameState, ant: Ant, target: AttackTarget, lookup: Lookup): void {

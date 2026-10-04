@@ -118,6 +118,50 @@ describe('target choice', () => {
     expect(raider.task.kind === 'attack' && 'nest' in raider.task.target).toBe(true);
   });
 
+  it('raiders turn on enemy soldiers that close in, even if not bitten yet', () => {
+    const state = quietGame();
+    state.ants = state.ants.filter((a) => a.colony !== 'red');
+    const redNest = getColony(state, 'red').nests[0];
+    const target = nestPoint(state, 'red');
+    const raider = spawn(state, 'black', 'soldier', { x: target.x - 10 * 32, y: target.y });
+    state.fog.black.fill(1);
+    issueCommand(state, 'black', { type: 'attack', antIds: [raider.id], target: { nest: redNest.id } });
+    // A red soldier walking right past (not attacking anyone).
+    const passer = spawn(state, 'red', 'soldier', { x: raider.x + 40, y: raider.y + 20 });
+    passer.hp = 1e6;
+    issueCommand(state, 'red', { type: 'move', antIds: [passer.id], target: { x: raider.x - 6 * 32, y: raider.y } });
+    run(state, 20);
+    expect(raider.task.kind === 'attack' && 'ant' in raider.task.target).toBe(true);
+  });
+
+  it('attack-moving onto an undefended nest damages it', () => {
+    const state = quietGame();
+    state.ants = state.ants.filter((a) => a.colony !== 'red');
+    const redNest = getColony(state, 'red').nests[0];
+    const target = nestPoint(state, 'red');
+    const squad = [0, 1, 2, 3].map((i) => spawn(state, 'black', 'soldier', { x: target.x - 6 * 32, y: target.y + i * 10 }));
+    state.fog.black.fill(1);
+    issueCommand(state, 'black', { type: 'attackMove', antIds: squad.map((a) => a.id), target });
+    run(state, 20 * 15);
+    expect(redNest.hp).toBeLessThan(NEST_MAX_HP);
+  });
+
+  it('a raiding squad surrounds the nest instead of bunching on one side', () => {
+    const state = quietGame();
+    state.ants = state.ants.filter((a) => a.colony !== 'red');
+    const redNest = getColony(state, 'red').nests[0];
+    const target = nestPoint(state, 'red');
+    const squad = Array.from({ length: 8 }, (_, i) =>
+      spawn(state, 'black', 'soldier', { x: target.x - 6 * 32, y: target.y - 30 + i * 8 }),
+    );
+    state.fog.black.fill(1);
+    issueCommand(state, 'black', { type: 'attack', antIds: squad.map((a) => a.id), target: { nest: redNest.id } });
+    run(state, 20 * 8);
+    const angles = squad.map((a) => Math.atan2(a.y - target.y, a.x - target.x));
+    const sides = new Set(angles.map((a) => Math.floor(((a + Math.PI) / (2 * Math.PI)) * 4)));
+    expect(sides.size).toBeGreaterThanOrEqual(3);
+  });
+
   it('idle soldiers go for a soldier before a closer worker', () => {
     const state = quietGame();
     const guard = own(state, 'black', 'soldier')[0];
