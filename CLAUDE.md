@@ -23,7 +23,7 @@ SimAnt-style RTS in Phaser 4 + TypeScript + Vite. See README.md for the roadmap.
 - **All randomness goes through `Rng` (`src/sim/rng.ts`)** so a seed reproduces a game. Never use `Math.random()` inside `src/sim/`.
 - The world is a tile grid (`TILE_SIZE` px per tile, see `src/config.ts`). Terrain, pathfinding, fog of war and resources all key off tile coordinates; units move in continuous world pixels.
 - The AI colony should play through the same command interface as the player.
-- Art is placeholder (coloured shapes). Keep visuals behind small render helpers so sprites can be swapped in later.
+- **Art** lives in `src/art/`: SVG generators for sprites, a per-pixel painter for terrain, and `manifest.ts` listing every texture (key, frame size, frames) plus `ART_OVERRIDES` for user-supplied images. `PreloadScene` builds it all before the menu. Sprites are authored at 2x and displayed at `ART_SCALE` (0.5); they face +x. New visuals should get a manifest entry rather than being drawn ad hoc with Graphics.
 
 ## Commands
 

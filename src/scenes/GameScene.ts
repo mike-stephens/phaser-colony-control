@@ -8,14 +8,15 @@ import { CreatureLayer } from '../render/CreatureLayer';
 import { DEPTH } from '../render/depths';
 import { FogLayer } from '../render/FogLayer';
 import { FoodLayer } from '../render/FoodLayer';
-import { TERRAIN_TEXTURE, generatePlaceholderTextures } from '../render/textures';
+import { ART_SCALE, ART_TILE_RATIO, GRASS, RUIN, nestKey, overlayKey } from '../art/manifest';
+import { ART_TILE, GRASS_VARIANTS, OVERLAY_TERRAINS } from '../art/terrain';
 import { WallLayer } from '../render/WallLayer';
 import { ANT_STATS, Ant } from '../sim/ants';
 import { Command, issueCommand } from '../sim/commands';
 import { Difficulty } from '../sim/difficulty';
 import { isExploredBy, isVisibleTo } from '../sim/fog';
 import { findFoodAt } from '../sim/food';
-import { Point, worldToTile } from '../sim/map';
+import { Point, Terrain, worldToTile } from '../sim/map';
 import { randomSeed } from '../sim/rng';
 import { TICK_MS, stepSimulation } from '../sim/simulation';
 import { foundBlocker } from '../sim/founding';
@@ -60,8 +61,8 @@ export class GameScene extends Phaser.Scene {
   private walls!: WallLayer;
   private fog!: FogLayer;
   private overlay!: Phaser.GameObjects.Graphics;
-  private nestMounds = new Map<number, Phaser.GameObjects.Arc>();
-  private ruinMounds: Phaser.GameObjects.Arc[] = [];
+  private nestMounds = new Map<number, Phaser.GameObjects.Image>();
+  private ruinMounds: Phaser.GameObjects.Image[] = [];
   private accumulator = 0;
   private lastAutosaveTick = 0;
 
@@ -81,7 +82,6 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     const { map } = this.state;
-    generatePlaceholderTextures(this);
     this.drawMap();
     this.walls = new WallLayer(this);
     this.foods = new FoodLayer(this);
@@ -329,14 +329,46 @@ export class GameScene extends Phaser.Scene {
     return findFoodAt(known, p, 4 / this.cameras.main.zoom)?.id ?? null;
   }
 
+  /**
+   * Ground: a grass layer with per-tile variants, then one "dual grid" layer
+   * per terrain type (dirt, water, rock, holes). Dual-grid tiles sit half a
+   * tile up-left, where four map tiles meet, which is what lets their edges
+   * blend smoothly (see art/terrain.ts).
+   */
   private drawMap(): void {
     const { map } = this.state;
-    const rows: number[][] = [];
-    for (let y = 0; y < map.height; y++) rows.push(map.tiles.slice(y * map.width, (y + 1) * map.width));
+    const grass: number[][] = [];
+    for (let y = 0; y < map.height; y++) {
+      const row: number[] = [];
+      for (let x = 0; x < map.width; x++) row.push((((x * 73856093) ^ (y * 19349663)) >>> 0) % GRASS_VARIANTS);
+      grass.push(row);
+    }
+    this.addTileLayer(grass, GRASS, 0, 0);
 
-    const tilemap = this.make.tilemap({ data: rows, tileWidth: TILE_SIZE, tileHeight: TILE_SIZE });
-    const tileset = tilemap.addTilesetImage(TERRAIN_TEXTURE)!;
-    tilemap.createLayer(0, tileset, 0, 0)!.setDepth(DEPTH.terrain);
+    const is = (x: number, y: number, t: Terrain) =>
+      x >= 0 && y >= 0 && x < map.width && y < map.height && map.tiles[y * map.width + x] === t;
+    for (const terrain of OVERLAY_TERRAINS) {
+      const rows: number[][] = [];
+      for (let y = 0; y <= map.height; y++) {
+        const row: number[] = [];
+        for (let x = 0; x <= map.width; x++) {
+          const idx =
+            (is(x - 1, y - 1, terrain) ? 8 : 0) |
+            (is(x, y - 1, terrain) ? 4 : 0) |
+            (is(x - 1, y, terrain) ? 2 : 0) |
+            (is(x, y, terrain) ? 1 : 0);
+          row.push(idx === 0 ? -1 : idx);
+        }
+        rows.push(row);
+      }
+      this.addTileLayer(rows, overlayKey(terrain), -TILE_SIZE / 2, -TILE_SIZE / 2);
+    }
+  }
+
+  private addTileLayer(data: number[][], key: string, x: number, y: number): void {
+    const tilemap = this.make.tilemap({ data, tileWidth: ART_TILE, tileHeight: ART_TILE });
+    const tileset = tilemap.addTilesetImage(key, key, ART_TILE, ART_TILE, 0, 0)!;
+    tilemap.createLayer(0, tileset, x, y)!.setScale(ART_TILE_RATIO).setDepth(DEPTH.terrain);
   }
 
   /** Keeps a mound per standing nest and rubble for each ruin. */
@@ -346,10 +378,7 @@ export class GameScene extends Phaser.Scene {
       standing.add(nest.id);
       if (this.nestMounds.has(nest.id)) continue;
       const c = nestCenter(nest);
-      const mound = this.add
-        .circle(c.x, c.y, NEST_RADIUS, COLONY_COLORS[colony.id])
-        .setStrokeStyle(3, 0xffffff)
-        .setDepth(DEPTH.nests);
+      const mound = this.add.image(c.x, c.y, nestKey(colony.id)).setScale(ART_SCALE).setDepth(DEPTH.nests);
       this.nestMounds.set(nest.id, mound);
     }
     for (const [id, mound] of this.nestMounds) {
@@ -361,9 +390,7 @@ export class GameScene extends Phaser.Scene {
     while (this.ruinMounds.length < this.state.ruins.length) {
       const ruin = this.state.ruins[this.ruinMounds.length];
       const c = { x: (ruin.tile.x + 0.5) * TILE_SIZE, y: (ruin.tile.y + 0.5) * TILE_SIZE };
-      this.ruinMounds.push(
-        this.add.circle(c.x, c.y, NEST_RADIUS, 0x3a2e22).setStrokeStyle(3, 0x666666).setDepth(DEPTH.nests),
-      );
+      this.ruinMounds.push(this.add.image(c.x, c.y, RUIN).setScale(ART_SCALE).setDepth(DEPTH.nests));
     }
   }
 

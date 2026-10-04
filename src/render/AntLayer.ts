@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
+import { ART_SCALE, antKey, walkAnim } from '../art/manifest';
 import { ANT_STATS, Ant } from '../sim/ants';
 import { DEPTH } from './depths';
-import { antTextureKey } from './textures';
 
 const SELECTION_COLOR = 0x7dff6a;
 const CARRIED_COLOR = 0xf3e2b0;
@@ -9,9 +9,9 @@ const PEBBLE_COLOR = 0x9a9a9a;
 const HP_GOOD = 0x6ad04a;
 const HP_LOW = 0xe04a3a;
 
-/** Keeps one sprite per ant in sync with the simulation. */
+/** Keeps one animated sprite per ant in sync with the simulation. */
 export class AntLayer {
-  private sprites = new Map<number, Phaser.GameObjects.Image>();
+  private sprites = new Map<number, Phaser.GameObjects.Sprite>();
   private rings: Phaser.GameObjects.Graphics;
   private carried: Phaser.GameObjects.Graphics;
   private hpBars: Phaser.GameObjects.Graphics;
@@ -43,7 +43,8 @@ export class AntLayer {
       alive.add(ant.id);
       let sprite = this.sprites.get(ant.id);
       if (!sprite) {
-        sprite = this.scene.add.image(ant.x, ant.y, antTextureKey(ant.colony, ant.type)).setDepth(DEPTH.ants);
+        sprite = this.scene.add.sprite(ant.x, ant.y, antKey(ant.colony, ant.type), 0);
+        sprite.setScale(ART_SCALE).setDepth(DEPTH.ants);
         this.sprites.set(ant.id, sprite);
       }
       const shown = isShown(ant);
@@ -58,13 +59,14 @@ export class AntLayer {
       sprite
         .setPosition(x + Math.cos(ant.angle) * lunge, y + Math.sin(ant.angle) * lunge)
         .setRotation(ant.angle);
+      animateWalk(sprite, ant.x !== ant.prevX || ant.y !== ant.prevY);
 
+      const stats = ANT_STATS[ant.type];
       if (ant.carrying > 0 || ant.pebble) {
-        const reach = ANT_STATS[ant.type].radius + 3;
+        const reach = stats.radius + 3;
         this.carried.fillStyle(ant.pebble ? PEBBLE_COLOR : CARRIED_COLOR);
         this.carried.fillCircle(x + Math.cos(ant.angle) * reach, y + Math.sin(ant.angle) * reach, 3);
       }
-      const stats = ANT_STATS[ant.type];
       if (ant.hp < stats.maxHp) {
         // Health bar only on hurt ants, so a healthy colony stays uncluttered.
         const frac = Math.max(0, ant.hp / stats.maxHp);
@@ -74,27 +76,38 @@ export class AntLayer {
         this.hpBars.fillStyle(frac > 0.5 ? HP_GOOD : HP_LOW).fillRect(x - w / 2, top, w * frac, 2);
       }
       if (selected.has(ant.id)) {
-        this.rings.strokeCircle(x, y, ANT_STATS[ant.type].radius + 4);
+        this.rings.strokeCircle(x, y, stats.radius + 4);
       }
     }
 
     for (const [id, sprite] of this.sprites) {
-      if (!alive.has(id)) {
-        this.sprites.delete(id);
-        // Dead ants flip over and fade rather than vanishing.
-        if (!sprite.visible) {
-          sprite.destroy();
-          continue;
-        }
-        sprite.setTint(0x777777);
-        this.scene.tweens.add({
-          targets: sprite,
-          alpha: 0,
-          scaleY: -1,
-          duration: 900,
-          onComplete: () => sprite.destroy(),
-        });
+      if (alive.has(id)) continue;
+      this.sprites.delete(id);
+      // Dead ants flip over and fade rather than vanishing.
+      if (!sprite.visible) {
+        sprite.destroy();
+        continue;
       }
+      sprite.anims.stop();
+      sprite.setFrame(0).setTint(0x888888);
+      this.scene.tweens.add({
+        targets: sprite,
+        alpha: 0,
+        scaleY: -ART_SCALE,
+        duration: 900,
+        onComplete: () => sprite.destroy(),
+      });
     }
+  }
+}
+
+/** Plays the texture's walk cycle while moving, and stands still otherwise. */
+export function animateWalk(sprite: Phaser.GameObjects.Sprite, moving: boolean): void {
+  const key = walkAnim(sprite.texture.key);
+  if (moving && sprite.scene.anims.exists(key)) {
+    sprite.anims.play(key, true);
+  } else if (sprite.anims.isPlaying) {
+    sprite.anims.stop();
+    sprite.setFrame(0);
   }
 }

@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
+import { ART_SCALE, SPIDER } from '../art/manifest';
 import { CREATURE_STATS, Creature } from '../sim/wildlife';
+import { animateWalk } from './AntLayer';
 import { DEPTH } from './depths';
-import { SPIDER_TEXTURE } from './textures';
 
-/** Wild creatures: sprite per creature, health bar when hurt, hidden in the fog. */
+/** Wild creatures: animated sprite per creature, health bar when hurt, hidden in the fog. */
 export class CreatureLayer {
-  private sprites = new Map<number, Phaser.GameObjects.Image>();
+  private sprites = new Map<number, Phaser.GameObjects.Sprite>();
   private bars: Phaser.GameObjects.Graphics;
 
   constructor(private scene: Phaser.Scene) {
@@ -19,7 +20,7 @@ export class CreatureLayer {
       alive.add(c.id);
       let sprite = this.sprites.get(c.id);
       if (!sprite) {
-        sprite = this.scene.add.image(c.x, c.y, SPIDER_TEXTURE).setDepth(DEPTH.creatures);
+        sprite = this.scene.add.sprite(c.x, c.y, SPIDER, 0).setScale(ART_SCALE).setDepth(DEPTH.creatures);
         this.sprites.set(c.id, sprite);
       }
       const shown = isShown(c);
@@ -31,6 +32,7 @@ export class CreatureLayer {
       const since = tick - c.lastAttackTick;
       const lunge = c.lastAttackTick >= 0 && since < 4 ? (4 - since) * 1.5 : 0;
       sprite.setPosition(x + Math.cos(c.angle) * lunge, y + Math.sin(c.angle) * lunge).setRotation(c.angle);
+      animateWalk(sprite, c.x !== c.prevX || c.y !== c.prevY);
 
       const stats = CREATURE_STATS[c.kind];
       if (c.hp < stats.maxHp) {
@@ -44,6 +46,7 @@ export class CreatureLayer {
     for (const [id, sprite] of this.sprites) {
       if (alive.has(id)) continue;
       this.sprites.delete(id);
+      sprite.anims.stop();
       this.scene.tweens.add({ targets: sprite, alpha: 0, duration: 900, onComplete: () => sprite.destroy() });
     }
   }

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { antTextureKey } from '../render/textures';
+import { ART_SCALE, antKey } from '../art/manifest';
 import { ANT_COST } from '../sim/economy';
 import { Point } from '../sim/map';
 import { findNest, nestCenter } from '../sim/state';
@@ -142,7 +142,7 @@ export class UndergroundScene extends Phaser.Scene {
       const p = P(c.x, c.y);
       let text = NAMES[c.kind];
       if (c.kind === 'queen') {
-        this.placeSprite(sprite++, antTextureKey(colony.id, 'queen'), p, 2.2 * s * 1.6, Math.sin(time / 900) * 0.3 - Math.PI / 2);
+        this.placeSprite(sprite++, antKey(colony.id, 'queen'), p, 2.2 * s * 1.6 * ART_SCALE * 0.9, Math.sin(time / 900) * 0.3 - Math.PI / 2);
       } else if (c.kind === 'nursery') {
         nest.queue.forEach((type, i) => this.drawEgg(g, p, c, s, i, i === 0 ? nest.progress / ANT_COST[type].ticks : 0));
         text += nest.queue.length ? ` (${nest.queue.length} egg${nest.queue.length > 1 ? 's' : ''})` : ' (empty)';
@@ -156,7 +156,7 @@ export class UndergroundScene extends Phaser.Scene {
           const a = i * 2.39996 + time / 3000;
           const rr = 0.8 * Math.sqrt((i + 0.5) / CHAMBER_CAPACITY.living);
           const q = { x: p.x + Math.cos(a) * c.r * 1.5 * s * rr, y: p.y + Math.sin(a) * c.r * s * rr };
-          this.placeSprite(sprite++, antTextureKey(colony.id, ant.type), q, s * 1.15, a + Math.PI / 2);
+          this.placeSprite(sprite++, antKey(colony.id, ant.type), q, s * 1.15 * ART_SCALE * 0.9, a + Math.PI / 2);
         });
         text += ` ${here.length}/${CHAMBER_CAPACITY.living}`;
       }
@@ -220,7 +220,7 @@ export class UndergroundScene extends Phaser.Scene {
   }
 
   private placeSprite(i: number, key: string, p: Point, scale: number, rotation: number): void {
-    if (!this.sprites[i]) this.sprites[i] = this.add.image(0, 0, key);
-    this.sprites[i].setTexture(key).setPosition(p.x, p.y).setScale(scale).setRotation(rotation).setVisible(true);
+    if (!this.sprites[i]) this.sprites[i] = this.add.image(0, 0, key, 0);
+    this.sprites[i].setTexture(key, 0).setPosition(p.x, p.y).setScale(scale).setRotation(rotation).setVisible(true);
   }
 }

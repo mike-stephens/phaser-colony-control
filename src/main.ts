@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { MenuScene } from './scenes/MenuScene';
+import { PreloadScene } from './scenes/PreloadScene';
 import { GameScene } from './scenes/GameScene';
 import { HudScene } from './scenes/HudScene';
 import { UndergroundScene } from './scenes/UndergroundScene';
@@ -13,7 +14,7 @@ const game = new Phaser.Game({
     width: window.innerWidth,
     height: window.innerHeight,
   },
-  scene: [MenuScene, GameScene, HudScene, UndergroundScene],
+  scene: [PreloadScene, MenuScene, GameScene, HudScene, UndergroundScene],
 });
 
 // Debug handle for the browser console and automated checks; dev builds only.

@@ -1,18 +1,15 @@
 import Phaser from 'phaser';
-import { Food, FoodKind, foodRadius } from '../sim/food';
+import { ART_SCALE, foodKey } from '../art/manifest';
+import { Food, foodRadius } from '../sim/food';
 import { DEPTH } from './depths';
 
-// Placeholder look per kind until real food sprites exist.
-const FOOD_COLORS: Record<FoodKind, { fill: number; edge: number }> = {
-  crumbs: { fill: 0xe9d8a6, edge: 0xa88d4f },
-  seeds: { fill: 0xc79a5a, edge: 0x7a5426 },
-  berries: { fill: 0xc2185b, edge: 0x6d0d33 },
-  carcass: { fill: 0x6b4f7a, edge: 0x2a1d33 },
-};
 const SELECTED_COLOR = 0xffe14d;
+/** Food radius (world px) at which the 64 px art is shown at ART_SCALE. */
+const ART_RADIUS = 16;
 
+/** Food sources; each shrinks as it is used up. */
 export class FoodLayer {
-  private shapes = new Map<number, Phaser.GameObjects.Arc>();
+  private sprites = new Map<number, Phaser.GameObjects.Image>();
   private highlight: Phaser.GameObjects.Graphics;
 
   constructor(private scene: Phaser.Scene) {
@@ -24,23 +21,23 @@ export class FoodLayer {
     this.highlight.clear();
     for (const food of foods) {
       alive.add(food.id);
-      let shape = this.shapes.get(food.id);
-      if (!shape) {
-        const c = FOOD_COLORS[food.kind];
-        shape = this.scene.add.circle(food.x, food.y, foodRadius(food), c.fill).setStrokeStyle(2, c.edge);
-        shape.setDepth(DEPTH.food);
-        this.shapes.set(food.id, shape);
+      let sprite = this.sprites.get(food.id);
+      if (!sprite) {
+        // Each source gets a fixed random turn so piles don't all look identical.
+        sprite = this.scene.add.image(food.x, food.y, foodKey(food.kind)).setDepth(DEPTH.food);
+        sprite.setRotation(((food.id * 2654435761) % 628) / 100);
+        this.sprites.set(food.id, sprite);
       }
-      shape.setRadius(foodRadius(food));
+      sprite.setScale((ART_SCALE * foodRadius(food)) / ART_RADIUS);
       if (food.id === selectedId) {
         this.highlight.lineStyle(2 / zoom, SELECTED_COLOR);
         this.highlight.strokeCircle(food.x, food.y, foodRadius(food) + 5);
       }
     }
-    for (const [id, shape] of this.shapes) {
+    for (const [id, sprite] of this.sprites) {
       if (!alive.has(id)) {
-        shape.destroy();
-        this.shapes.delete(id);
+        sprite.destroy();
+        this.sprites.delete(id);
       }
     }
   }

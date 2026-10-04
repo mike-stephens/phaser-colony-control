@@ -6,6 +6,21 @@ Built with [Phaser 4](https://phaser.io), TypeScript and Vite.
 
 **Play:** https://mike-stephens.github.io/phaser-colony-control/ (deployed automatically on every push to `main`)
 
+## Art
+
+All art is built into the code: the insects and props are SVG drawings (`src/art/insects.ts`, `src/art/objects.ts`) and the ground is painted per pixel (`src/art/terrain.ts`), so there are no image files to manage and nothing to license. Ants and spiders have walk cycles; terrain edges blend smoothly thanks to a "dual grid" (each drawn ground tile sits where four map tiles meet).
+
+**Using your own art:** put an image in `public/assets/` and point its entry at it in `ART_OVERRIDES` in `src/art/manifest.ts`, e.g. `'ant-black-worker': 'assets/ant-black-worker.png'`. Anything not overridden keeps the built-in art. Sprites are drawn at **2x** their on-screen size and face **right**; animated ones have their frames side by side. Sizes (one frame, in pixels):
+
+| Key | Size | Frames |
+|---|---|---|
+| `ant-{black,red}-worker` / `-soldier` / `-queen` | 60x42 / 74x52 / 96x67 | 3 (stand, stride A, stride B) |
+| `spider` | 96x96 | 2 |
+| `food-{crumbs,seeds,berries,carcass}`, `pebbles`, `wall-{black,red}` | 64x64 | 1 |
+| `nest-{black,red}`, `ruin` | 104x104 | 1 |
+| `terrain-grass` | 64x64 | 4 variants |
+| `terrain-{dirt,water,rock,hole}` | 64x64 | 16 dual-grid tiles (see `src/art/terrain.ts`) |
+
 ## Running locally
 
 Requires Node 20+.
@@ -75,5 +90,5 @@ Works with a trackpad or a mouse.
 - [x] **Phase 5:** combat, soldiers, red AI colony (easy / medium / hard), win/lose
 - [x] **Phase 6:** neutral creatures (spiders), pebble walls, save/load
 - [x] **Phase 7:** underground view (auto-growing first), queens founding new colonies
-- [ ] Real art: free asset packs and/or custom sprites
+- [x] Real art: built-in illustrated sprites with walk cycles and blended terrain (overridable with your own images)
 - [ ] Player-directed digging underground (choose which chambers to dig)
