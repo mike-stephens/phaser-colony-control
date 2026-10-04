@@ -19,19 +19,24 @@ npm run build      # typecheck + production build into dist/
 
 Dev shortcut: add `?seed=12345` to the URL to skip the menu and load that exact map.
 
-## Controls (current)
+## Controls
+
+Works with a trackpad or a mouse.
 
 | Input | Action |
 |---|---|
-| WASD / arrow keys, right-drag | Pan |
-| Mouse wheel | Zoom |
-| Esc | Back to menu |
+| Left-click an ant | Select it (Shift+click toggles it in the selection) |
+| Left-drag | Box-select your ants (Shift adds to the selection) |
+| Right-click / two-finger click / Ctrl+click | Move selected ants there |
+| Two-finger swipe, mouse wheel, WASD / arrows, right- or middle-drag | Pan |
+| Pinch, Ctrl+wheel, Q / E | Zoom |
+| Esc | Clear the selection (press again for the menu) |
 
 ## Roadmap
 
 - [x] **Phase 0:** project scaffold, start screen, seeded random map, camera
 - [ ] **Phase 1:** better map generation (noise-based terrain), minimap
-- [ ] **Phase 2:** ant units, group selection, move orders, A* pathfinding
+- [x] **Phase 2:** ant units, group selection, move orders, A* pathfinding
 - [ ] **Phase 3:** fog of war, exploring, food sources, gathering with worker counts
 - [ ] **Phase 4:** colony economy: food stockpile, spawning, upkeep
 - [ ] **Phase 5:** combat, soldiers, red AI colony (easy / medium / hard), win/lose

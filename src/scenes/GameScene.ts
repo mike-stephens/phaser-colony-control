@@ -1,26 +1,23 @@
 import Phaser from 'phaser';
 import { TILE_SIZE } from '../config';
-import { Terrain } from '../sim/map';
+import { CameraController } from '../input/CameraController';
+import { SelectionController } from '../input/SelectionController';
+import { AntLayer } from '../render/AntLayer';
+import { TERRAIN_TEXTURE, generatePlaceholderTextures } from '../render/textures';
+import { issueCommand } from '../sim/commands';
+import { TICK_MS, stepSimulation } from '../sim/simulation';
 import { GameState, createNewGame } from '../sim/state';
 
-// Placeholder colours until real tile art exists.
-const TERRAIN_COLORS: Record<Terrain, number> = {
-  [Terrain.Grass]: 0x4a7c3a,
-  [Terrain.Dirt]: 0x8b6b43,
-  [Terrain.Water]: 0x3a6ea5,
-  [Terrain.Rock]: 0x7a7a7a,
-  [Terrain.Hole]: 0x231a12,
-};
-
 const COLONY_COLORS = { black: 0x111111, red: 0xc0392b } as const;
-
-const PAN_SPEED = 800; // screen px per second
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 2;
+/** Cap on catch-up after a long frame (e.g. a backgrounded tab). */
+const MAX_FRAME_MS = 250;
 
 export class GameScene extends Phaser.Scene {
-  private state!: GameState;
-  private keys!: Record<'up' | 'down' | 'left' | 'right' | 'w' | 'a' | 's' | 'd', Phaser.Input.Keyboard.Key>;
+  state!: GameState;
+  selection!: SelectionController;
+  private cameraCtl!: CameraController;
+  private ants!: AntLayer;
+  private accumulator = 0;
 
   constructor() {
     super('Game');
@@ -28,88 +25,62 @@ export class GameScene extends Phaser.Scene {
 
   init(data: { seed: number }): void {
     this.state = createNewGame(data.seed);
+    this.accumulator = 0;
   }
 
   create(): void {
+    generatePlaceholderTextures(this);
     this.drawMap();
     this.drawNests();
-    this.setupCamera();
-    this.setupInput();
+    this.ants = new AntLayer(this);
 
-    this.add
-      .text(10, 10, `Seed: ${this.state.seed}   WASD/arrows or right-drag: pan   Wheel: zoom   Esc: menu`, {
-        fontFamily: 'monospace',
-        fontSize: '14px',
-        color: '#ffffff',
-        backgroundColor: '#000000aa',
-        padding: { x: 6, y: 4 },
-      })
-      .setScrollFactor(0)
-      .setDepth(1000);
+    const worldW = this.state.map.width * TILE_SIZE;
+    const worldH = this.state.map.height * TILE_SIZE;
+    this.cameraCtl = new CameraController(this, worldW, worldH);
+    const player = this.state.colonies.find((c) => c.isPlayer)!;
+    this.selection = new SelectionController(this, this.cameraCtl, () => this.state, player.id, (antIds, target) =>
+      issueCommand(this.state, player.id, { type: 'move', antIds, target }),
+    );
+
+    this.cameras.main.centerOn((player.nest.x + 0.5) * TILE_SIZE, (player.nest.y + 0.5) * TILE_SIZE);
+
+    // Esc clears the selection first, so a stray press doesn't quit the game.
+    this.input.keyboard!.on('keydown-ESC', () => {
+      if (this.selection.selected.size > 0) this.selection.clear();
+      else this.scene.start('Menu');
+    });
+
+    this.scene.launch('Hud');
+    this.events.once('shutdown', () => this.scene.stop('Hud'));
   }
 
   update(_time: number, delta: number): void {
-    const cam = this.cameras.main;
-    const step = (PAN_SPEED * delta) / 1000 / cam.zoom;
-    const k = this.keys;
-    if (k.left.isDown || k.a.isDown) cam.scrollX -= step;
-    if (k.right.isDown || k.d.isDown) cam.scrollX += step;
-    if (k.up.isDown || k.w.isDown) cam.scrollY -= step;
-    if (k.down.isDown || k.s.isDown) cam.scrollY += step;
+    this.cameraCtl.update(delta);
+
+    this.accumulator += Math.min(delta, MAX_FRAME_MS);
+    while (this.accumulator >= TICK_MS) {
+      stepSimulation(this.state);
+      this.accumulator -= TICK_MS;
+    }
+    this.selection.prune();
+    this.ants.sync(this.state.ants, this.accumulator / TICK_MS, this.selection.selected);
   }
 
   private drawMap(): void {
     const { map } = this.state;
-    const g = this.add.graphics();
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        g.fillStyle(TERRAIN_COLORS[map.tiles[y * map.width + x]]);
-        g.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-      }
-    }
+    const rows: number[][] = [];
+    for (let y = 0; y < map.height; y++) rows.push(map.tiles.slice(y * map.width, (y + 1) * map.width));
+
+    const tilemap = this.make.tilemap({ data: rows, tileWidth: TILE_SIZE, tileHeight: TILE_SIZE });
+    const tileset = tilemap.addTilesetImage(TERRAIN_TEXTURE)!;
+    tilemap.createLayer(0, tileset, 0, 0)!.setDepth(0);
   }
 
   private drawNests(): void {
     for (const colony of this.state.colonies) {
       const cx = (colony.nest.x + 0.5) * TILE_SIZE;
       const cy = (colony.nest.y + 0.5) * TILE_SIZE;
-      this.add.circle(cx, cy, TILE_SIZE * 0.8, COLONY_COLORS[colony.id]).setStrokeStyle(3, 0xffffff);
+      this.add.circle(cx, cy, TILE_SIZE * 0.8, COLONY_COLORS[colony.id]).setStrokeStyle(3, 0xffffff).setDepth(1);
     }
-  }
-
-  private setupCamera(): void {
-    const { map } = this.state;
-    const cam = this.cameras.main;
-    cam.setBounds(0, 0, map.width * TILE_SIZE, map.height * TILE_SIZE);
-    const player = this.state.colonies.find((c) => c.isPlayer)!;
-    cam.centerOn((player.nest.x + 0.5) * TILE_SIZE, (player.nest.y + 0.5) * TILE_SIZE);
-  }
-
-  private setupInput(): void {
-    const kb = this.input.keyboard!;
-    this.keys = {
-      up: kb.addKey('UP'),
-      down: kb.addKey('DOWN'),
-      left: kb.addKey('LEFT'),
-      right: kb.addKey('RIGHT'),
-      w: kb.addKey('W'),
-      a: kb.addKey('A'),
-      s: kb.addKey('S'),
-      d: kb.addKey('D'),
-    };
-    kb.on('keydown-ESC', () => this.scene.start('Menu'));
-
-    this.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
-      const cam = this.cameras.main;
-      cam.setZoom(Phaser.Math.Clamp(cam.zoom * (dy > 0 ? 0.9 : 1.1), MIN_ZOOM, MAX_ZOOM));
-    });
-
-    this.input.mouse?.disableContextMenu();
-    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (!p.rightButtonDown()) return;
-      const cam = this.cameras.main;
-      cam.scrollX -= (p.x - p.prevPosition.x) / cam.zoom;
-      cam.scrollY -= (p.y - p.prevPosition.y) / cam.zoom;
-    });
   }
 }

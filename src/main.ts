@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { MenuScene } from './scenes/MenuScene';
 import { GameScene } from './scenes/GameScene';
+import { HudScene } from './scenes/HudScene';
 
 new Phaser.Game({
   type: Phaser.AUTO,
@@ -11,5 +12,5 @@ new Phaser.Game({
     width: window.innerWidth,
     height: window.innerHeight,
   },
-  scene: [MenuScene, GameScene],
+  scene: [MenuScene, GameScene, HudScene],
 });

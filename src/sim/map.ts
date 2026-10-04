@@ -1,3 +1,5 @@
+import { TILE_SIZE } from '../config';
+
 export enum Terrain {
   Grass = 0,
   Dirt = 1,
@@ -14,7 +16,14 @@ export const WALKABLE: Record<Terrain, boolean> = {
   [Terrain.Hole]: false,
 };
 
+/** A position in tile coordinates. */
 export interface TilePos {
+  x: number;
+  y: number;
+}
+
+/** A position in world pixels. */
+export interface Point {
   x: number;
   y: number;
 }
@@ -36,4 +45,16 @@ export function inBounds(map: GameMap, x: number, y: number): boolean {
 
 export function isWalkable(map: GameMap, x: number, y: number): boolean {
   return inBounds(map, x, y) && WALKABLE[tileAt(map, x, y)];
+}
+
+export function worldToTile(px: number): number {
+  return Math.floor(px / TILE_SIZE);
+}
+
+export function tileCenter(t: number): number {
+  return (t + 0.5) * TILE_SIZE;
+}
+
+export function isWalkableWorld(map: GameMap, px: number, py: number): boolean {
+  return isWalkable(map, worldToTile(px), worldToTile(py));
 }
