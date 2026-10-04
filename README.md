@@ -4,6 +4,8 @@ A browser-based real-time strategy game inspired by SimAnt. Lead the black ant c
 
 Built with [Phaser 4](https://phaser.io), TypeScript and Vite.
 
+**Play:** https://mike-stephens.github.io/phaser-colony-control/ (deployed automatically on every push to `main`)
+
 ## Running locally
 
 Requires Node 20+.
