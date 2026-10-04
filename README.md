@@ -43,8 +43,8 @@ Dev shortcut: add `?seed=12345` (optionally `&difficulty=easy|medium|hard`) to t
 
 ## Combat and winning
 
-- **Soldiers** (25 HP, 4 damage/s) guard on their own: idle soldiers attack enemies within 5 tiles, but won't chase more than ~8 tiles before returning. **Workers** (10 HP, 1 damage/s) only fight back when bitten while idle.
-- Right-click a **visible enemy ant** to attack it, or a **discovered enemy nest** to raid it: raiders fight through anything in their way, then return to the nest. A plain move ignores enemies, so you can always retreat.
+- **Soldiers** (25 HP, 4 damage/s, a little slower than workers) guard on their own: idle soldiers attack enemies within 5 tiles, **preferring soldiers and spiders over workers**, won't chase more than ~8 tiles, and give up on a worker that outruns them. **Workers** (10 HP, 1 damage/s) only fight back when bitten while idle.
+- **To hit a base, target the nest itself:** once you've scouted it, right-click it (or press A and click it). Raiders stay focused on the nest, ignore ants walking past, and only stop to fight something that bites them before going back to the raid. **Attack-move** (A + click the ground) instead fights whatever it meets on the way. A plain move ignores enemies, so you can always retreat.
 - Nests have 1000 HP and slowly regenerate when left alone. **Destroy the red nest to win; lose yours and it's over.** A colony with no ants and no food left to train one is also out.
 - **Difficulty** (chosen on the menu) changes when and how hard red attacks: Easy from ~10 min in small groups, Medium from ~6 min, Hard from ~4 min in large waves. Red also gathers 0.8× food on Easy and 1.25× on Hard; otherwise it plays by your rules and only knows what its own fog shows.
 

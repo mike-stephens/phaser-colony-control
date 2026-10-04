@@ -16,6 +16,14 @@ const SEEK_INTERVAL = 5;
 const LEASH_DIST = 8 * TILE_SIZE;
 /** Bitten idle ants fight back against attackers within this distance (px). */
 const RETALIATE_DIST = 4 * TILE_SIZE;
+/**
+ * When picking a fight on their own, ants treat workers as this much (px)
+ * farther away than they are, so real threats (soldiers, queens, spiders)
+ * come first.
+ */
+const WORKER_TARGET_PENALTY = 4 * TILE_SIZE;
+/** A self-started chase of a faster ant is dropped once it gets this far (px) out of reach. */
+const OUTRUN_GAP = 3 * TILE_SIZE;
 /** Ticks between chase re-paths. */
 const REPATH_TICKS = 10;
 /** Nests start regenerating this many ticks after the last bite... */
@@ -57,10 +65,11 @@ export function startAttack(ant: Ant, target: AttackTarget, then: Task | null, l
 // ---------------------------------------------------------------- target selection
 
 /**
- * Idle soldiers (and explorers, attack-movers and raiders on the way) attack the
- * nearest visible enemy or wild creature in aggro range. Idle ants of any type
- * fight back when bitten. Gatherers and builders keep working, and a plain move
- * order is never interrupted, so the player can always retreat.
+ * Idle soldiers (and explorers and attack-movers) attack the nearest visible
+ * threat in aggro range, preferring fighters over workers. Raiders sent at a
+ * nest stay focused on it and only fight back when bitten. Idle ants of any
+ * type fight back when bitten. Gatherers and builders keep working, and a
+ * plain move order is never interrupted, so the player can always retreat.
  */
 function seekFight(state: GameState, ant: Ant, lookup: Lookup): void {
   const task = ant.task;
@@ -80,25 +89,30 @@ function seekFight(state: GameState, ant: Ant, lookup: Lookup): void {
     ant.lastAttacker = null;
   }
   const aggro = ANT_STATS[ant.type].aggroRange * TILE_SIZE;
-  if (!target && aggro > 0) target = nearestVisibleEnemy(state, ant, aggro);
+  if (!target && aggro > 0 && !raiding) target = nearestVisibleEnemy(state, ant, aggro);
   if (target) startAttack(ant, target, task, { x: ant.x, y: ant.y });
 }
 
-/** Nearest enemy ant or wild creature the ant's colony can currently see. */
+/**
+ * The visible enemy ant or wild creature in range that most needs fighting:
+ * nearest first, but with workers ranked as if farther away.
+ */
 export function nearestVisibleEnemy(state: GameState, ant: Ant, range: number): AttackTarget | null {
   let best: AttackTarget | null = null;
-  let bestDist = range;
-  const consider = (p: Point, target: AttackTarget) => {
+  let bestScore = Infinity;
+  const consider = (p: Point, target: AttackTarget, penalty: number) => {
     const d = dist(ant, p);
-    if (d <= bestDist && isVisibleTo(state, ant.colony, worldToTile(p.x), worldToTile(p.y))) {
-      best = target;
-      bestDist = d;
-    }
+    if (d > range || d + penalty >= bestScore) return;
+    if (!isVisibleTo(state, ant.colony, worldToTile(p.x), worldToTile(p.y))) return;
+    best = target;
+    bestScore = d + penalty;
   };
   for (const other of state.ants) {
-    if (other.colony !== ant.colony && other.hp > 0) consider(other, { ant: other.id });
+    if (other.colony !== ant.colony && other.hp > 0) {
+      consider(other, { ant: other.id }, other.type === 'worker' ? WORKER_TARGET_PENALTY : 0);
+    }
   }
-  for (const c of state.creatures) if (c.hp > 0) consider(c, { creature: c.id });
+  for (const c of state.creatures) if (c.hp > 0) consider(c, { creature: c.id }, 0);
   return best;
 }
 
@@ -141,6 +155,17 @@ function runAttack(state: GameState, ant: Ant, task: AttackTask, lookup: Lookup)
 
   const reach = stats.radius + targetRadius(task.target, lookup) + 4;
   const d = dist(ant, pos);
+
+  // Don't run after something faster that we only picked on ourselves.
+  if (task.leash && 'ant' in task.target && d > reach + OUTRUN_GAP) {
+    const prey = lookup.ants.get(task.target.ant)!;
+    if (ANT_STATS[prey.type].speed > stats.speed) {
+      const home = task.leash;
+      endAttack(ant, task);
+      if (ant.task.kind === 'idle') ant.moveTarget = home;
+      return;
+    }
+  }
   if (d <= reach) {
     ant.path = [];
     ant.moveTarget = null;

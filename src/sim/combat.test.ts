@@ -87,6 +87,60 @@ describe('fighting', () => {
   });
 });
 
+describe('target choice', () => {
+  it('raiders sent at a nest ignore workers walking past', () => {
+    const state = quietGame();
+    state.ants = state.ants.filter((a) => a.colony !== 'red'); // no guards: just the passer
+    const redNest = getColony(state, 'red').nests[0];
+    const target = nestPoint(state, 'red');
+    const raiders = [0, 1, 2].map((i) => spawn(state, 'black', 'soldier', { x: target.x - 8 * 32, y: target.y + i * 10 }));
+    // A red worker strolling right across their path.
+    const passer = spawn(state, 'red', 'worker', { x: target.x - 5 * 32, y: target.y });
+    state.fog.black.fill(1); // the nest has been scouted
+    issueCommand(state, 'black', { type: 'attack', antIds: raiders.map((a) => a.id), target: { nest: redNest.id } });
+    run(state, 20 * 3);
+    expect(raiders.every((a) => a.task.kind === 'attack' && 'nest' in a.task.target)).toBe(true);
+    expect(passer.hp).toBe(ANT_STATS.worker.maxHp);
+  });
+
+  it('raiders fight back when bitten, then resume the raid', () => {
+    const state = quietGame();
+    state.ants = state.ants.filter((a) => a.colony !== 'red'); // only the one defender below
+    const redNest = getColony(state, 'red').nests[0];
+    const target = nestPoint(state, 'red');
+    const raider = spawn(state, 'black', 'soldier', { x: target.x - 8 * 32, y: target.y });
+    state.fog.black.fill(1); // the nest has been scouted
+    issueCommand(state, 'black', { type: 'attack', antIds: [raider.id], target: { nest: redNest.id } });
+    const defender = spawn(state, 'red', 'worker', { x: raider.x + 12, y: raider.y });
+    issueCommand(state, 'red', { type: 'attack', antIds: [defender.id], target: { ant: raider.id } });
+    run(state, 20 * 6);
+    expect(state.ants.includes(defender)).toBe(false);
+    expect(raider.task.kind === 'attack' && 'nest' in raider.task.target).toBe(true);
+  });
+
+  it('idle soldiers go for a soldier before a closer worker', () => {
+    const state = quietGame();
+    const guard = own(state, 'black', 'soldier')[0];
+    const worker = spawn(state, 'red', 'worker', { x: guard.x + 2 * 32, y: guard.y });
+    const soldier = spawn(state, 'red', 'soldier', { x: guard.x - 4 * 32, y: guard.y });
+    worker.hp = soldier.hp = 1e6;
+    run(state, 10);
+    expect(guard.task.kind === 'attack' && 'ant' in guard.task.target && guard.task.target.ant).toBe(soldier.id);
+  });
+
+  it('soldiers give up chasing a worker that outruns them', () => {
+    const state = quietGame();
+    const guard = own(state, 'black', 'soldier')[0];
+    const runner = spawn(state, 'red', 'worker', { x: guard.x + 3 * 32, y: guard.y });
+    runner.hp = 1e6;
+    run(state, 10);
+    expect(guard.task.kind).toBe('attack');
+    issueCommand(state, 'red', { type: 'move', antIds: [runner.id], target: { x: runner.x + 20 * 32, y: runner.y } });
+    run(state, 20 * 6);
+    expect(guard.task.kind).toBe('idle');
+  });
+});
+
 describe('attack-move and stop', () => {
   /** A black soldier squad and a red worker standing on their route. */
   function ambush() {

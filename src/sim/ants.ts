@@ -21,7 +21,7 @@ export interface AntStats {
 
 export const ANT_STATS: Record<AntType, AntStats> = {
   worker: { speed: 64, maxHp: 10, radius: 6, sight: 4, damage: 1, attackCooldown: 20, aggroRange: 0 },
-  soldier: { speed: 52, maxHp: 25, radius: 8, sight: 4, damage: 4, attackCooldown: 20, aggroRange: 5 },
+  soldier: { speed: 58, maxHp: 25, radius: 8, sight: 4, damage: 4, attackCooldown: 20, aggroRange: 5 },
   queen: { speed: 36, maxHp: 40, radius: 10, sight: 3, damage: 3, attackCooldown: 20, aggroRange: 0 },
 };
 
