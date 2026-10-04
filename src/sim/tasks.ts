@@ -4,7 +4,8 @@ import { CARRY_CAPACITY, Food, HARVEST_TICKS } from './food';
 import { Point, isWalkable, isWalkableWorld, tileCenter, worldToTile } from './map';
 import { regionAt } from './regions';
 import { Rng } from './rng';
-import { GameState, nestPoint } from './state';
+import { AI_PROFILES } from './difficulty';
+import { GameState, getColony, nestPoint } from './state';
 
 type GatherTask = Extract<Task, { kind: 'gather' }>;
 type ExploreTask = Extract<Task, { kind: 'explore' }>;
@@ -23,7 +24,12 @@ const MAX_RETRIES = 3;
 export function updateTasks(state: GameState, rng: Rng): void {
   for (const ant of state.ants) {
     if (ant.carrying > 0 && !isMoving(ant) && dist(ant, nestPoint(state, ant.colony)) <= DEPOSIT_DIST) {
-      state.colonies.find((c) => c.id === ant.colony)!.food += ant.carrying;
+      const colony = getColony(state, ant.colony);
+      const amount = colony.isPlayer
+        ? ant.carrying
+        : Math.round(ant.carrying * AI_PROFILES[state.difficulty].gatherMultiplier);
+      colony.food += amount;
+      colony.stats.gathered += amount;
       ant.carrying = 0;
     }
     const task = ant.task;

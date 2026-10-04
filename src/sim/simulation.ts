@@ -1,5 +1,6 @@
 import { updateAi } from './ai';
 import { ANT_STATS, Ant } from './ants';
+import { updateCombat } from './combat';
 import { updateEconomy } from './economy';
 import { updateFog } from './fog';
 import { Point, tileCenter, worldToTile } from './map';
@@ -19,11 +20,13 @@ export const TICK_MS = 50;
 const PATH_NODE_BUDGET = 40_000;
 
 export function stepSimulation(state: GameState): void {
+  if (state.winner !== null) return;
   state.tick++;
   const rng = new Rng(state.rngState);
   updateAi(state, rng);
   updateEconomy(state, rng);
   updateTasks(state, rng);
+  updateCombat(state);
   processPathRequests(state);
   for (const ant of state.ants) {
     ant.prevX = ant.x;

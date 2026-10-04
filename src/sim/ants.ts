@@ -7,21 +7,30 @@ export interface AntStats {
   /** World pixels per second. */
   speed: number;
   maxHp: number;
-  /** Body radius in world pixels, used for selection and path clearance. */
+  /** Body radius in world pixels, used for selection, reach and path clearance. */
   radius: number;
   /** Vision radius in tiles. */
   sight: number;
+  /** Damage per bite. */
+  damage: number;
+  /** Ticks between bites. */
+  attackCooldown: number;
+  /** Tiles within which an idle ant attacks enemies on its own; 0 = only when ordered or bitten. */
+  aggroRange: number;
 }
 
 export const ANT_STATS: Record<AntType, AntStats> = {
-  worker: { speed: 64, maxHp: 10, radius: 6, sight: 4 },
-  soldier: { speed: 52, maxHp: 25, radius: 8, sight: 4 },
-  queen: { speed: 36, maxHp: 40, radius: 10, sight: 3 },
+  worker: { speed: 64, maxHp: 10, radius: 6, sight: 4, damage: 1, attackCooldown: 20, aggroRange: 0 },
+  soldier: { speed: 52, maxHp: 25, radius: 8, sight: 4, damage: 4, attackCooldown: 20, aggroRange: 5 },
+  queen: { speed: 36, maxHp: 40, radius: 10, sight: 3, damage: 3, attackCooldown: 20, aggroRange: 0 },
 };
+
+export type AttackTarget = { ant: number } | { nest: ColonyId };
 
 /**
  * What an ant is doing beyond its current path. A plain move order leaves the
- * ant 'idle' with a path; tasks re-plan on their own (see tasks.ts).
+ * ant 'idle' with a path; the other tasks re-plan on their own (tasks.ts,
+ * combat.ts).
  */
 export type Task =
   | { kind: 'idle' }
@@ -36,6 +45,16 @@ export type Task =
       retries: number;
       /** Where the last food came from, to find a replacement when it runs out. */
       lastFoodPos: Point;
+    }
+  | {
+      kind: 'attack';
+      target: AttackTarget;
+      /** Task to resume once the target is gone (e.g. the raid this fight interrupted). */
+      then: Task | null;
+      /** For self-started fights: give up if dragged this far from here. Null for direct orders. */
+      leash: Point | null;
+      /** Tick at which the chase path may be recomputed. */
+      repathTick: number;
     };
 
 export interface Ant {
@@ -57,6 +76,12 @@ export interface Ant {
   path: Point[];
   /** Destination waiting for a path to be computed (see stepSimulation). */
   moveTarget: Point | null;
+  /** Ticks until this ant can bite again. */
+  cooldown: number;
+  /** Tick of this ant's most recent bite (for the lunge animation); -1 = never. */
+  lastAttackTick: number;
+  /** Id of the last ant that bit this one, until it reacts. */
+  lastAttacker: number | null;
 }
 
 export function createAnt(id: number, colony: ColonyId, type: AntType, pos: Point): Ant {
@@ -74,6 +99,9 @@ export function createAnt(id: number, colony: ColonyId, type: AntType, pos: Poin
     carrying: 0,
     path: [],
     moveTarget: null,
+    cooldown: 0,
+    lastAttackTick: -1,
+    lastAttacker: null,
   };
 }
 

@@ -1,6 +1,7 @@
-import { Ant, AntType, isMoving } from './ants';
+import { Ant, AntType, AttackTarget, isMoving } from './ants';
+import { startAttack } from './combat';
 import { ANT_COST, trainBlocker } from './economy';
-import { isExploredBy } from './fog';
+import { isExploredBy, isVisibleTo } from './fog';
 import { formationSlots } from './formation';
 import { Point, worldToTile } from './map';
 import { regionAt } from './regions';
@@ -22,7 +23,9 @@ export type Command =
   /** Removes queue[index] and refunds it (cancelling index 0 loses its progress). */
   | { type: 'cancelTraining'; index: number }
   /** Where newly hatched ants gather; null resets to the nest. */
-  | { type: 'setRally'; target: Point | null };
+  | { type: 'setRally'; target: Point | null }
+  /** Attack a visible enemy ant, or raid an enemy nest you have found. */
+  | { type: 'attack'; antIds: number[]; target: AttackTarget };
 
 export function issueCommand(state: GameState, colony: ColonyId, command: Command): void {
   switch (command.type) {
@@ -57,7 +60,21 @@ export function issueCommand(state: GameState, colony: ColonyId, command: Comman
     case 'setRally':
       getColony(state, colony).rally = command.target ? { ...command.target } : null;
       break;
+    case 'attack':
+      if (!canTarget(state, colony, command.target)) break;
+      for (const ant of ownAnts(state, colony, command.antIds)) startAttack(ant, command.target, null, null);
+      break;
   }
+}
+
+/** Fog-of-war check: only visible enemy ants and discovered enemy nests can be targeted. */
+function canTarget(state: GameState, colony: ColonyId, target: AttackTarget): boolean {
+  if ('ant' in target) {
+    const enemy = state.ants.find((a) => a.id === target.ant);
+    return !!enemy && enemy.colony !== colony && isVisibleTo(state, colony, worldToTile(enemy.x), worldToTile(enemy.y));
+  }
+  const enemy = getColony(state, target.nest);
+  return target.nest !== colony && !enemy.eliminated && isExploredBy(state, colony, enemy.nest.x, enemy.nest.y);
 }
 
 /** Workers of `colony` currently assigned to the given food source. */

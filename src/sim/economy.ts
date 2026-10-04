@@ -28,11 +28,11 @@ const FEEDING_ORDER: AntType[] = ['queen', 'worker', 'soldier'];
 export const FOOD_REGROW_TICKS = 1200;
 
 export function updateEconomy(state: GameState, rng: Rng): void {
-  for (const colony of state.colonies) updateProduction(state, colony, rng);
+  for (const colony of state.colonies) if (!colony.eliminated) updateProduction(state, colony, rng);
   if (state.rules.foodRegrowth && state.tick % FOOD_REGROW_TICKS === 0) regrowFood(state, rng);
   if (state.rules.upkeep && state.tick % UPKEEP_INTERVAL_TICKS === 0) {
-    for (const colony of state.colonies) payUpkeep(state, colony);
-    state.ants = state.ants.filter((a) => a.hp > 0);
+    // Ants starved to death here are removed (and counted) by combat.removeDead.
+    for (const colony of state.colonies) if (!colony.eliminated) payUpkeep(state, colony);
   }
 }
 
@@ -82,6 +82,7 @@ function hatch(state: GameState, colony: Colony, type: AntType, rng: Rng): void 
   ant.angle = rng.next() * Math.PI * 2;
   ant.moveTarget = colony.rally ?? nearNest(state, nest, rng);
   state.ants.push(ant);
+  colony.stats.trained++;
 }
 
 /** A walkable spot a short walk from the nest entrance, so hatchlings don't pile up on it. */

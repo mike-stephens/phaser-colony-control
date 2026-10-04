@@ -25,7 +25,13 @@ export class AntLayer {
    * `alpha` is how far we are between the previous and current tick (0..1).
    * Ants for which `isShown` is false (e.g. enemies in the fog) are hidden.
    */
-  sync(ants: Ant[], alpha: number, selected: ReadonlySet<number>, isShown: (ant: Ant) => boolean): void {
+  sync(
+    ants: Ant[],
+    alpha: number,
+    tick: number,
+    selected: ReadonlySet<number>,
+    isShown: (ant: Ant) => boolean,
+  ): void {
     const alive = new Set<number>();
     this.rings.clear();
     this.rings.lineStyle(1.5, SELECTION_COLOR);
@@ -46,7 +52,12 @@ export class AntLayer {
 
       const x = ant.prevX + (ant.x - ant.prevX) * alpha;
       const y = ant.prevY + (ant.y - ant.prevY) * alpha;
-      sprite.setPosition(x, y).setRotation(ant.angle);
+      // Quick lunge for a few ticks after each bite.
+      const sinceBite = tick - ant.lastAttackTick;
+      const lunge = ant.lastAttackTick >= 0 && sinceBite < 4 ? 4 - sinceBite : 0;
+      sprite
+        .setPosition(x + Math.cos(ant.angle) * lunge, y + Math.sin(ant.angle) * lunge)
+        .setRotation(ant.angle);
 
       if (ant.carrying > 0) {
         const reach = ANT_STATS[ant.type].radius + 3;
@@ -68,8 +79,20 @@ export class AntLayer {
 
     for (const [id, sprite] of this.sprites) {
       if (!alive.has(id)) {
-        sprite.destroy();
         this.sprites.delete(id);
+        // Dead ants flip over and fade rather than vanishing.
+        if (!sprite.visible) {
+          sprite.destroy();
+          continue;
+        }
+        sprite.setTint(0x777777);
+        this.scene.tweens.add({
+          targets: sprite,
+          alpha: 0,
+          scaleY: -1,
+          duration: 900,
+          onComplete: () => sprite.destroy(),
+        });
       }
     }
   }

@@ -15,7 +15,7 @@ import { TICK_MS } from '../sim/simulation';
 import type { GameScene } from './GameScene';
 
 const HELP =
-  'Left-click/drag: select ants, food or nest (H)   Right-click (two-finger, Ctrl+click): move / explore fog / gather / rally\n' +
+  'Left-click/drag: select ants, food or nest (H)   Right-click (two-finger, Ctrl+click): attack / gather / explore fog / move / rally\n' +
   'Swipe/wheel, WASD, right-drag: pan   Pinch, Ctrl+wheel, Q/E: zoom   Esc: deselect / menu';
 
 const FOOD_NAMES: Record<FoodKind, string> = { crumbs: 'Bread crumbs', seeds: 'Seeds', berries: 'Berries' };
@@ -34,6 +34,12 @@ const TEXT_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
 const PLAIN = { ...TEXT_STYLE, backgroundColor: undefined };
 
 const seconds = (ticks: number) => Math.ceil((ticks * TICK_MS) / 1000);
+/** How long (ticks) an "under attack" alert stays up after the last bite. */
+const ALERT_TICKS = 60;
+const clock = (ticks: number) => {
+  const s = Math.floor((ticks * TICK_MS) / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
 
 /** A clickable text label that can be greyed out. */
 class Button {
@@ -69,7 +75,11 @@ class Button {
 export class HudScene extends Phaser.Scene {
   private status!: Phaser.GameObjects.Text;
   private starving!: Phaser.GameObjects.Text;
+  private alert!: Phaser.GameObjects.Text;
   private help!: Phaser.GameObjects.Text;
+  private gameOver!: Phaser.GameObjects.Container;
+  private gameOverTitle!: Phaser.GameObjects.Text;
+  private gameOverStats!: Phaser.GameObjects.Text;
 
   private foodPanel!: Phaser.GameObjects.Container;
   private foodInfo!: Phaser.GameObjects.Text;
@@ -97,9 +107,11 @@ export class HudScene extends Phaser.Scene {
         backgroundColor: '#8b1a1a',
       })
       .setVisible(false);
+    this.alert = this.add.text(0, 10, '', { ...TEXT_STYLE, backgroundColor: '#b33a00' }).setOrigin(0.5, 0);
     this.help = this.add.text(10, 0, HELP, TEXT_STYLE).setOrigin(0, 1);
     this.createFoodPanel();
     this.createNestPanel();
+    this.createGameOver();
     this.layout();
     this.scale.on('resize', this.layout, this);
     this.events.once('shutdown', () => this.scale.off('resize', this.layout, this));
@@ -107,6 +119,7 @@ export class HudScene extends Phaser.Scene {
 
   /** Lets the game scene ignore clicks that land on HUD controls. */
   isOverUi(sx: number, sy: number): boolean {
+    if (this.gameOver?.visible) return true;
     return [this.foodPanel, this.nestPanel].some((p) => p?.visible && p.getBounds().contains(sx, sy));
   }
 
@@ -127,11 +140,19 @@ export class HudScene extends Phaser.Scene {
     const total = own.worker + own.soldier + own.queen;
     const due = upkeepDue(state, player.id);
     this.status.setText(
-      `Food: ${player.food}   Eats ${due} every ${seconds(UPKEEP_INTERVAL_TICKS)}s (next in ${seconds(ticksUntilUpkeep(state))}s)   ` +
+      `${clock(state.tick)}  [${state.difficulty}]   Food: ${player.food}   Eats ${due} every ${seconds(UPKEEP_INTERVAL_TICKS)}s (next in ${seconds(ticksUntilUpkeep(state))}s)   ` +
         `Ants: ${total}/${POPULATION_CAP}  W${own.worker} S${own.soldier} Q${own.queen}   Idle workers: ${idleWorkers}` +
         (selectedCount > 0 ? `   Selected: ${selectedCount}` : ''),
     );
     this.starving.setVisible(player.starving);
+
+    const nestHit = state.tick - player.lastNestHitTick < ALERT_TICKS;
+    const antsHit = state.tick - player.lastAntHitTick < ALERT_TICKS;
+    this.alert
+      .setText(nestHit ? 'Your nest is under attack! (H to jump home)' : 'Your ants are under attack!')
+      .setVisible((nestHit || antsHit) && state.winner === null);
+
+    this.updateGameOver();
 
     this.updateFoodPanel(own.worker);
     this.updateNestPanel(total);
@@ -195,8 +216,8 @@ export class HudScene extends Phaser.Scene {
 
   private updateNestPanel(population: number): void {
     const { state, player, selection } = this.game_;
-    this.nestPanel.setVisible(selection.selectedNest);
-    if (!selection.selectedNest) return;
+    this.nestPanel.setVisible(selection.selectedNest && !player.eliminated && state.winner === null);
+    if (!this.nestPanel.visible) return;
 
     this.nestInfo.setText(`Black colony nest          Ants ${population}/${POPULATION_CAP}`);
     TRAINABLE.forEach((type, i) => {
@@ -224,6 +245,54 @@ export class HudScene extends Phaser.Scene {
     );
   }
 
+  // ---------------------------------------------------------------- game over
+
+  private createGameOver(): void {
+    const dim = this.add.rectangle(0, 0, 10, 10, 0x000000, 0.6).setOrigin(0);
+    const card = this.add.rectangle(0, 0, 560, 360, 0x111111, 0.95).setStrokeStyle(2, ACCENT);
+    this.gameOverTitle = this.add
+      .text(0, -110, '', { fontFamily: 'monospace', fontSize: '56px', color: '#ffffff' })
+      .setOrigin(0.5);
+    this.gameOverStats = this.add
+      .text(0, -30, '', { ...PLAIN, fontSize: '16px', align: 'left' })
+      .setOrigin(0.5, 0);
+    const again = new Button(this, -125, 135, ' Play again (new map) ', () => this.game_.playAgain());
+    const menu = new Button(this, 145, 135, ' Main menu ', () => this.game_.toMenu());
+    for (const b of [again, menu]) b.text.setFontSize(18).setOrigin(0.5);
+    this.gameOver = this.add
+      .container(0, 0, [dim, card, this.gameOverTitle, this.gameOverStats, again.text, menu.text])
+      .setVisible(false)
+      .setDepth(100);
+    dim.setName('dim');
+  }
+
+  private updateGameOver(): void {
+    const { state, player } = this.game_;
+    if (state.winner === null) {
+      this.gameOver.setVisible(false);
+      return;
+    }
+    if (this.gameOver.visible) return;
+    const won = state.winner === player.id;
+    this.gameOverTitle.setText(won ? 'VICTORY' : 'DEFEAT').setColor(won ? '#7dff6a' : '#ff6a5a');
+    const row = (label: string, f: (c: typeof player) => number) =>
+      `${label.padEnd(16)}${String(f(player)).padStart(8)}${String(f(state.colonies.find((c) => c.id !== player.id)!)).padStart(8)}`;
+    this.gameOverStats.setText(
+      [
+        `${won ? 'The red nest has fallen.' : 'Your nest has fallen.'}  Time ${clock(state.tick)} on ${state.difficulty}`,
+        '',
+        `${''.padEnd(16)}${'Black'.padStart(8)}${'Red'.padStart(8)}`,
+        row('Food gathered', (c) => c.stats.gathered),
+        row('Ants trained', (c) => c.stats.trained),
+        row('Enemies killed', (c) => c.stats.kills),
+        row('Ants lost', (c) => c.stats.losses),
+      ].join('\n'),
+    );
+    this.foodPanel.setVisible(false);
+    this.nestPanel.setVisible(false);
+    this.gameOver.setVisible(true);
+  }
+
   // ---------------------------------------------------------------- layout
 
   private panelBackground(height: number): Phaser.GameObjects.Rectangle {
@@ -234,7 +303,13 @@ export class HudScene extends Phaser.Scene {
   }
 
   private layout(): void {
-    this.help.setY(this.scale.height - 10);
+    const { width, height } = this.scale;
+    this.help.setY(height - 10);
+    this.alert.setX(width / 2).setY(76);
+    this.gameOver.setPosition(width / 2, height / 2);
+    (this.gameOver.getByName('dim') as Phaser.GameObjects.Rectangle)
+      .setPosition(-width / 2, -height / 2)
+      .setSize(width, height);
     const x = this.scale.width - PANEL_WIDTH;
     this.foodPanel.setPosition(x, 80);
     this.nestPanel.setPosition(x, 80);

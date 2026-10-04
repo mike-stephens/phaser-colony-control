@@ -1,5 +1,7 @@
 import { MAP_HEIGHT, MAP_WIDTH } from '../config';
+import { TILE_SIZE } from '../config';
 import { Ant, AntType, createAnt } from './ants';
+import { Difficulty } from './difficulty';
 import { updateFog } from './fog';
 import { Food } from './food';
 import { formationSlots } from './formation';
@@ -22,7 +24,26 @@ export interface Colony {
   rally: Point | null;
   /** True when the colony couldn't feed every ant at the last meal. */
   starving: boolean;
+  nestHp: number;
+  /** Tick the nest was last bitten; regeneration waits a while after this. */
+  lastNestHitTick: number;
+  /** Tick any of this colony's ants was last bitten (drives the "under attack" alert). */
+  lastAntHitTick: number;
+  /** Out of the game: nest destroyed, or no ants and no way to make more. */
+  eliminated: boolean;
+  stats: ColonyStats;
 }
+
+export interface ColonyStats {
+  trained: number;
+  gathered: number;
+  kills: number;
+  losses: number;
+}
+
+export const NEST_MAX_HP = 1000;
+/** Radius of the nest mound in world pixels (for clicks, bites and drawing). */
+export const NEST_RADIUS = TILE_SIZE * 0.8;
 
 /** Toggles for whole systems; tests and future sandbox modes switch these off. */
 export interface Rules {
@@ -50,12 +71,15 @@ export interface GameState {
   /** Next id for any entity (ants, food, ...). */
   nextId: number;
   rules: Rules;
+  difficulty: Difficulty;
+  /** Set when only one colony is left standing. */
+  winner: ColonyId | null;
 }
 
 const STARTING_ANTS: Record<AntType, number> = { worker: 10, soldier: 5, queen: 0 };
 export const STARTING_FOOD = 100;
 
-export function createNewGame(seed: number): GameState {
+export function createNewGame(seed: number, difficulty: Difficulty = 'medium'): GameState {
   const { map, nestSites, foodSites } = generateWorld(seed, MAP_WIDTH, MAP_HEIGHT);
   const tileCount = map.width * map.height;
   const state: GameState = {
@@ -70,6 +94,8 @@ export function createNewGame(seed: number): GameState {
     fog: { black: new Array(tileCount).fill(0), red: new Array(tileCount).fill(0) },
     nextId: 1,
     rules: { upkeep: true, ai: true, foodRegrowth: true },
+    difficulty,
+    winner: null,
   };
   for (const site of foodSites) {
     state.food.push({
@@ -87,7 +113,21 @@ export function createNewGame(seed: number): GameState {
 }
 
 function newColony(id: ColonyId, isPlayer: boolean, nest: TilePos): Colony {
-  return { id, isPlayer, nest, food: STARTING_FOOD, queue: [], progress: 0, rally: null, starving: false };
+  return {
+    id,
+    isPlayer,
+    nest,
+    food: STARTING_FOOD,
+    queue: [],
+    progress: 0,
+    rally: null,
+    starving: false,
+    nestHp: NEST_MAX_HP,
+    lastNestHitTick: -1_000_000,
+    lastAntHitTick: -1_000_000,
+    eliminated: false,
+    stats: { trained: 0, gathered: 0, kills: 0, losses: 0 },
+  };
 }
 
 export function getColony(state: GameState, id: ColonyId): Colony {

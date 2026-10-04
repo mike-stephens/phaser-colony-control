@@ -1,37 +1,44 @@
-import { isMoving } from './ants';
+import { TILE_SIZE } from '../config';
+import { Ant, isMoving } from './ants';
 import { gatherersOf, issueCommand } from './commands';
-import { ANT_COST, upkeepDue, trainBlocker } from './economy';
-import { isExploredBy } from './fog';
+import { AI_PROFILES, AiProfile } from './difficulty';
+import { ANT_COST, trainBlocker, upkeepDue } from './economy';
+import { isExploredBy, isVisibleTo } from './fog';
 import { Point, isWalkable, tileCenter, worldToTile } from './map';
 import { regionAt } from './regions';
 import { Rng } from './rng';
 import { Colony, GameState, nestPoint } from './state';
 
-/** How often (ticks) the AI re-evaluates; it doesn't need to react every tick. */
-const THINK_INTERVAL = 40;
 /** Most workers the AI puts on a single food source. */
 const MAX_PER_SOURCE = 4;
-/** Workers the AI aims for before it starts adding soldiers. */
+/** Workers the AI aims for before it starts adding soldiers freely. */
 const WORKER_TARGET = 20;
-/** Soldiers only eat; don't build them until the economy has this many workers. */
-const MIN_WORKERS_FOR_SOLDIERS = 12;
+/** Enemies within this many tiles of the nest trigger a defence. */
+const DEFENCE_RADIUS = 12;
+/** Soldiers sent to look for the enemy nest when it hasn't been found yet. */
+const SCOUT_PARTY = 3;
 
 /**
  * Computer opponent. It only acts through issueCommand and only knows what
- * its own fog of war shows, the same as the player. For now it runs the
- * economy (explore, gather, train); fighting comes in Phase 5.
+ * its own fog of war shows, the same as the player. Difficulty changes how
+ * quickly it decides, when and how hard it attacks, and a gathering bonus
+ * (see difficulty.ts).
  */
 export function updateAi(state: GameState, rng: Rng): void {
-  if (!state.rules.ai || state.tick % THINK_INTERVAL !== 0) return;
+  const profile = AI_PROFILES[state.difficulty];
+  if (!state.rules.ai || state.tick % profile.thinkInterval !== 0) return;
   for (const colony of state.colonies) {
-    if (!colony.isPlayer) think(state, colony, rng);
+    if (!colony.isPlayer && !colony.eliminated) think(state, colony, profile, rng);
   }
 }
 
-function think(state: GameState, colony: Colony, rng: Rng): void {
+function think(state: GameState, colony: Colony, profile: AiProfile, rng: Rng): void {
   const openSlots = assignIdleWorkers(state, colony, rng);
-  train(state, colony, openSlots);
+  train(state, colony, profile, openSlots);
+  if (!defend(state, colony)) attack(state, colony, profile, rng);
 }
+
+// ---------------------------------------------------------------- economy
 
 /** Puts idle workers on known food or scouting; returns gatherer slots still open. */
 function assignIdleWorkers(state: GameState, colony: Colony, rng: Rng): number {
@@ -64,51 +71,122 @@ function assignIdleWorkers(state: GameState, colony: Colony, rng: Rng): number {
   // Nothing known for the rest to gather: scout the nearest unexplored ground.
   const scouts = idle.filter((a) => a.task.kind === 'idle');
   if (scouts.length > 0) {
-    const target = scoutTarget(state, colony, rng);
+    const target = scoutTarget(state, colony, rng, 'nearest');
     if (target) issueCommand(state, colony.id, { type: 'explore', antIds: scouts.map((a) => a.id), target });
   }
   return openSlots;
-}
-
-/** Samples random tiles and returns the unexplored, reachable one closest to the nest. */
-function scoutTarget(state: GameState, colony: Colony, rng: Rng): Point | null {
-  const { map } = state;
-  const home = regionAt(map, colony.nest.x, colony.nest.y);
-  let best: Point | null = null;
-  let bestDist = Infinity;
-  for (let i = 0; i < 300; i++) {
-    const x = rng.int(0, map.width - 1);
-    const y = rng.int(0, map.height - 1);
-    if (!isWalkable(map, x, y) || regionAt(map, x, y) !== home || isExploredBy(state, colony.id, x, y)) continue;
-    const d = Math.hypot(x - colony.nest.x, y - colony.nest.y);
-    if (d < bestDist) {
-      best = { x: tileCenter(x), y: tileCenter(y) };
-      bestDist = d;
-    }
-  }
-  return best;
 }
 
 /**
  * Grows the colony only as fast as its food supply allows: more workers while
  * there is food for them to gather, soldiers once the economy has slack.
  */
-function train(state: GameState, colony: Colony, openSlots: number): void {
+function train(state: GameState, colony: Colony, profile: AiProfile, openSlots: number): void {
   if (colony.queue.length >= 2) return;
-  const workers = state.ants.filter((a) => a.colony === colony.id && a.type === 'worker').length;
-  const soldiers = state.ants.filter((a) => a.colony === colony.id && a.type === 'soldier').length;
-  const upkeep = upkeepDue(state, colony.id);
+  const workers = count(state, colony, 'worker');
+  const soldiers = count(state, colony, 'soldier');
   let type: 'worker' | 'soldier' | null = null;
-  if (openSlots > 0 && (workers < WORKER_TARGET || soldiers * 2 >= workers)) {
+  if (openSlots > 0 && (workers < WORKER_TARGET || soldiers * profile.workersPerSoldier >= workers)) {
     type = 'worker';
-  } else if (workers >= MIN_WORKERS_FOR_SOLDIERS && soldiers * 2 < workers) {
+  } else if (workers >= profile.minWorkersForSoldiers && soldiers * profile.workersPerSoldier < workers) {
     type = 'soldier';
   }
   if (!type) return;
   // Keep meals in reserve so training never starves the colony; soldiers need more slack.
-  const reserve = upkeep * (type === 'worker' ? 2 : 4);
+  const reserve = upkeepDue(state, colony.id) * (type === 'worker' ? 2 : 4);
   if (colony.food - ANT_COST[type].food < reserve) return;
   if (trainBlocker(state, colony, type) === null) {
     issueCommand(state, colony.id, { type: 'train', antType: type });
   }
+}
+
+// ---------------------------------------------------------------- military
+
+/** Sends every soldier not already fighting at the intruder nearest the nest. Returns true if defending. */
+function defend(state: GameState, colony: Colony): boolean {
+  const nest = nestPoint(state, colony.id);
+  let intruder: Ant | null = null;
+  let best = DEFENCE_RADIUS * TILE_SIZE;
+  for (const a of state.ants) {
+    if (a.colony === colony.id) continue;
+    const d = Math.hypot(a.x - nest.x, a.y - nest.y);
+    if (d < best && isVisibleTo(state, colony.id, worldToTile(a.x), worldToTile(a.y))) {
+      intruder = a;
+      best = d;
+    }
+  }
+  if (!intruder) return false;
+
+  const defenders = state.ants.filter(
+    (a) => a.colony === colony.id && a.type === 'soldier' && !(a.task.kind === 'attack' && 'ant' in a.task.target),
+  );
+  if (defenders.length > 0) {
+    issueCommand(state, colony.id, {
+      type: 'attack',
+      antIds: defenders.map((a) => a.id),
+      target: { ant: intruder.id },
+    });
+  }
+  return true;
+}
+
+/** Launches a wave at the enemy nest once enough soldiers are idle, scouting for it first if needed. */
+function attack(state: GameState, colony: Colony, profile: AiProfile, rng: Rng): void {
+  if (state.tick < profile.firstAttackTick) return;
+  const idleSoldiers = state.ants.filter(
+    (a) => a.colony === colony.id && a.type === 'soldier' && a.task.kind === 'idle' && !isMoving(a),
+  );
+  const enemy = state.colonies.find(
+    (c) => c.id !== colony.id && !c.eliminated && isExploredBy(state, colony.id, c.nest.x, c.nest.y),
+  );
+
+  if (enemy) {
+    if (idleSoldiers.length < profile.waveSize) return;
+    issueCommand(state, colony.id, {
+      type: 'attack',
+      antIds: idleSoldiers.map((a) => a.id),
+      target: { nest: enemy.id },
+    });
+    return;
+  }
+
+  // Enemy nest not found yet: keep a small party searching the far side of the map.
+  const searching = state.ants.some((a) => a.colony === colony.id && a.type === 'soldier' && a.task.kind === 'explore');
+  if (searching || idleSoldiers.length < SCOUT_PARTY) return;
+  const target = scoutTarget(state, colony, rng, 'farthest');
+  if (target) {
+    issueCommand(state, colony.id, {
+      type: 'explore',
+      antIds: idleSoldiers.slice(0, SCOUT_PARTY).map((a) => a.id),
+      target,
+    });
+  }
+}
+
+// ---------------------------------------------------------------- helpers
+
+/** Samples random tiles and returns an unexplored, reachable one nearest to / farthest from the nest. */
+function scoutTarget(state: GameState, colony: Colony, rng: Rng, prefer: 'nearest' | 'farthest'): Point | null {
+  const { map } = state;
+  const home = regionAt(map, colony.nest.x, colony.nest.y);
+  let best: Point | null = null;
+  let bestScore = Infinity;
+  for (let i = 0; i < 300; i++) {
+    const x = rng.int(0, map.width - 1);
+    const y = rng.int(0, map.height - 1);
+    if (!isWalkable(map, x, y) || regionAt(map, x, y) !== home || isExploredBy(state, colony.id, x, y)) continue;
+    const d = Math.hypot(x - colony.nest.x, y - colony.nest.y);
+    const score = prefer === 'nearest' ? d : -d;
+    if (score < bestScore) {
+      best = { x: tileCenter(x), y: tileCenter(y) };
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function count(state: GameState, colony: Colony, type: Ant['type']): number {
+  let n = 0;
+  for (const a of state.ants) if (a.colony === colony.id && a.type === type) n++;
+  return n;
 }
