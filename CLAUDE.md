@@ -19,7 +19,7 @@ SimAnt-style RTS in Phaser 4 + TypeScript + Vite. See README.md for the roadmap.
 - Wildlife (`src/sim/wildlife.ts`) is not a colony: creatures have their own list, ignore fog, and attack any ant.
 - **Saves** are `JSON.stringify(GameState)` in localStorage (`src/persistence/saves.ts`). Any change to GameState's shape must bump `STATE_VERSION` (older saves are then hidden), and state must stay JSON-safe: no `Infinity`, `NaN`, `Map`, class instances or functions. Derived caches (regions, visibility) are WeakMaps rebuilt after load. The save round-trip test in `phase6.test.ts` guards this.
 - In dev builds `window.game` is the Phaser.Game, for console poking and automated browser checks.
-- HUD text belongs in `HudScene` (its own camera) so it doesn't zoom with the world.
+- **HUD** (`HudScene` + `src/ui/`): top bar, minimap (`Minimap.ts`), selection panel (`SelectionPanel.ts`) and command card (`commandCard.ts`). The world camera's viewport sits between the bars (`HUD_TOP` / `HUD_BOTTOM` in `ui/theme.ts`), so convert pointers with `CameraController.screenToWorld`. New player actions should be added to `commandsFor()` with a hotkey and tooltip; letter keys are routed GameScene.onKey -> HudScene.pressHotkey, so don't bind letters elsewhere. Targeted commands use `selection.targeting` and resolve in `GameScene.orderAt`.
 - **All randomness goes through `Rng` (`src/sim/rng.ts`)** so a seed reproduces a game. Never use `Math.random()` inside `src/sim/`.
 - The world is a tile grid (`TILE_SIZE` px per tile, see `src/config.ts`). Terrain, pathfinding, fog of war and resources all key off tile coordinates; units move in continuous world pixels.
 - The AI colony should play through the same command interface as the player.

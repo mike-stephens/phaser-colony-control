@@ -16,6 +16,10 @@ import { wallPlanBlocker } from './walls';
  */
 export type Command =
   | { type: 'move'; antIds: number[]; target: Point }
+  /** Like move, but the ants fight any enemy or creature they meet on the way. */
+  | { type: 'attackMove'; antIds: number[]; target: Point }
+  /** Drop whatever the ants are doing and stand still. */
+  | { type: 'stop'; antIds: number[] }
   | { type: 'explore'; antIds: number[]; target: Point }
   | { type: 'gather'; antIds: number[]; foodId: number }
   /** Adjusts how many of the colony's workers gather from one food source. */
@@ -41,6 +45,22 @@ export function issueCommand(state: GameState, colony: ColonyId, command: Comman
   switch (command.type) {
     case 'move':
       issueMove(state, ownAnts(state, colony, command.antIds), command.target);
+      break;
+    case 'attackMove': {
+      const ants = ownAnts(state, colony, command.antIds);
+      issueMove(state, ants, command.target);
+      // Keep each ant's formation slot as its destination, but fight on the way.
+      for (const ant of ants) {
+        if (ant.moveTarget) ant.task = { kind: 'attackMove', target: { ...ant.moveTarget }, retries: 0 };
+      }
+      break;
+    }
+    case 'stop':
+      for (const ant of ownAnts(state, colony, command.antIds)) {
+        ant.task = { kind: 'idle' };
+        ant.path = [];
+        ant.moveTarget = null;
+      }
       break;
     case 'explore':
       issueExplore(state, ownAnts(state, colony, command.antIds), command.target);

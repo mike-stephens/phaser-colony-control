@@ -48,6 +48,12 @@ export type Task =
       lastFoodPos: Point;
     }
   | {
+      /** Walking to a spot but fighting anything met on the way (attack-move). */
+      kind: 'attackMove';
+      target: Point;
+      retries: number;
+    }
+  | {
       /** A queen walking to a site to found a new nest there. */
       kind: 'found';
       target: Point;

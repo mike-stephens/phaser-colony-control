@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { TILE_SIZE } from '../config';
 import { CameraController } from '../input/CameraController';
-import { SelectionController } from '../input/SelectionController';
+import { SelectionController, TargetKind } from '../input/SelectionController';
+import { HUD_BOTTOM, HUD_TOP } from '../ui/theme';
 import { deleteSave, writeSave } from '../persistence/saves';
 import { AntLayer } from '../render/AntLayer';
 import { CreatureLayer } from '../render/CreatureLayer';
@@ -101,38 +102,24 @@ export class GameScene extends Phaser.Scene {
       },
       foodAt: (p) => this.knownFoodAt(p),
       nestAt: (p) => this.player.nests.find((n) => dist(p, nestCenter(n)) <= NEST_RADIUS + 4)?.id ?? null,
-      onFoundSite: (p) => this.foundAt(p),
+      onTarget: (kind, p) => this.orderAt(p, kind),
       isOverUi: (sx, sy) => (this.scene.get('Hud') as HudScene).isOverUi(sx, sy),
       onPaintWall: (p, erase) => {
         const tile = { x: worldToTile(p.x), y: worldToTile(p.y) };
         this.issue(erase ? { type: 'removeWalls', tiles: [tile] } : { type: 'planWalls', tiles: [tile] });
       },
     });
+    // The world is shown between the HUD's top and bottom bars.
+    const fitViewport = () =>
+      this.cameras.main.setViewport(0, HUD_TOP, this.scale.width, Math.max(100, this.scale.height - HUD_TOP - HUD_BOTTOM));
+    fitViewport();
+    this.scale.on('resize', fitViewport);
+    this.events.once('shutdown', () => this.scale.off('resize', fitViewport));
     this.cameras.main.centerOn(this.homeCenter.x, this.homeCenter.y);
 
+    // Letters go to the HUD's command card; these are the fixed keys.
     const kb = this.input.keyboard!;
-    // Esc backs out one level: underground view, a mode, the selection, then pause.
-    kb.on('keydown-ESC', () => {
-      if (this.scene.isActive('Underground')) this.closeUnderground();
-      else if (this.selection.foundMode) this.selection.foundMode = false;
-      else if (this.selection.buildMode) this.setBuildMode(false);
-      else if (this.selection.hasSelection) this.selection.clear();
-      else this.togglePause();
-    });
-    kb.on('keydown-P', () => this.togglePause());
-    kb.on('keydown-B', () => this.setBuildMode(!this.selection.buildMode));
-    kb.on('keydown-F', () => this.setFoundMode(!this.selection.foundMode));
-    kb.on('keydown-U', () => (this.scene.isActive('Underground') ? this.closeUnderground() : this.openUnderground()));
-    // H: select a nest and jump to it; pressing again cycles through your nests.
-    kb.on('keydown-H', () => {
-      const nests = this.player.nests;
-      if (nests.length === 0) return;
-      const i = nests.findIndex((n) => n.id === this.selection.selectedNest);
-      const next = nests[(i + 1) % nests.length];
-      this.selection.selectNest(next.id);
-      const c = nestCenter(next);
-      this.cameras.main.centerOn(c.x, c.y);
-    });
+    kb.on('keydown', (e: KeyboardEvent) => this.onKey(e));
 
     this.scene.launch('Hud');
     this.events.once('shutdown', () => {
@@ -142,6 +129,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    // No edge-scrolling behind overlays.
+    this.cameraCtl.edgeScroll =
+      !this.paused && !this.hud.helpOpen && this.state.winner === null && !this.scene.isActive('Underground');
     this.cameraCtl.update(delta);
 
     if (this.state.winner === null && !this.paused) {
@@ -183,31 +173,168 @@ export class GameScene extends Phaser.Scene {
     return this.state.ants.filter((a) => a.type === 'queen' && this.selection.selected.has(a.id));
   }
 
-  setFoundMode(on: boolean): void {
-    if (on && this.selectedQueens.length === 0) return;
-    this.selection.foundMode = on;
-    if (on) this.selection.buildMode = false;
+  /** The player's selected ants. */
+  get selectedAnts(): Ant[] {
+    return this.state.ants.filter((a) => this.selection.selected.has(a.id));
+  }
+
+  get hud(): HudScene {
+    return this.scene.get('Hud') as HudScene;
+  }
+
+  private onKey(e: KeyboardEvent): void {
+    if (this.scene.isActive('Underground')) {
+      if (e.key === 'Escape' || e.key.toLowerCase() === 'u') this.closeUnderground();
+      return;
+    }
+    if (e.key === 'Escape') return this.back();
+    if (e.key === 'F1' || e.key === '?') {
+      e.preventDefault();
+      this.hud.toggleHelp();
+      return;
+    }
+    if (this.hud.helpOpen || this.state.winner !== null) return;
+    if (e.key.toLowerCase() === 'p') return this.togglePause();
+    if (this.paused) return;
+    if (e.key === '.') return this.selectIdleWorkers();
+    if (e.key.toLowerCase() === 'h') return this.cycleNests();
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    this.hud.pressHotkey(e.key.toUpperCase());
+  }
+
+  /** Esc backs out one level: help, a pending command, build mode, the selection, then pause. */
+  back(): void {
+    if (this.hud.helpOpen) this.hud.toggleHelp();
+    else if (this.selection.targeting) this.selection.targeting = null;
+    else if (this.selection.buildMode) this.setBuildMode(false);
+    else if (this.selection.hasSelection) this.selection.clear();
+    else this.togglePause();
+  }
+
+  /** H: select a nest and jump to it; pressing again cycles through your nests. */
+  cycleNests(): void {
+    const nests = this.player.nests;
+    if (nests.length === 0) return;
+    const i = nests.findIndex((n) => n.id === this.selection.selectedNest);
+    const next = nests[(i + 1) % nests.length];
+    this.selection.selectNest(next.id);
+    const c = nestCenter(next);
+    this.cameraCtl.centerOn(c.x, c.y);
+  }
+
+  centerOn(p: Point): void {
+    this.cameraCtl.centerOn(p.x, p.y);
+  }
+
+  /** The world rectangle in view, for the minimap. */
+  get view() {
+    return this.cameraCtl.view;
+  }
+
+  /** Selects every idle worker and jumps to the first (StarCraft's idle-worker button). */
+  selectIdleWorkers(): void {
+    const idle = this.state.ants.filter(
+      (a) => a.colony === this.player.id && a.type === 'worker' && a.task.kind === 'idle',
+    );
+    if (idle.length === 0) return this.hud.toast('No idle workers');
+    this.selection.clear();
+    for (const a of idle) this.selection.selected.add(a.id);
+    this.centerOn(idle[0]);
+  }
+
+  /** Narrows the selection to one ant (clicking its icon in the selection panel). */
+  selectOnly(antId: number): void {
+    this.selection.clear();
+    this.selection.selected.add(antId);
+  }
+
+  /** Starts a command that waits for a click on the map. */
+  beginTargeting(kind: TargetKind): void {
+    if (kind === 'found' && this.selectedQueens.length === 0) return;
+    this.selection.buildMode = false;
+    this.selection.targeting = kind;
+  }
+
+  stopSelected(): void {
+    this.issue({ type: 'stop', antIds: this.selectedAnts.map((a) => a.id) });
+  }
+
+  /** Sends each selected ant back to its nearest nest. */
+  returnSelectedHome(): void {
+    for (const ant of this.selectedAnts) {
+      const nest = this.player.nests
+        .map((n) => nestCenter(n))
+        .sort((a, b) => dist(a, ant) - dist(b, ant))[0];
+      if (nest) this.issue({ type: 'move', antIds: [ant.id], target: nest });
+    }
+  }
+
+  /**
+   * Orders the selection at a world point. With a `kind` (from targeting or a
+   * command button) it does that; without one it's the context-sensitive
+   * right-click (also used by the minimap).
+   */
+  orderAt(p: Point, kind?: TargetKind): void {
+    const ids = this.selectedAnts.map((a) => a.id);
+    const marker = (color: number) => this.selection.flashMarker(p, color);
+    this.selection.targeting = null;
+    switch (kind) {
+      case undefined:
+        if (ids.length > 0) marker(this.orderTo(ids, p));
+        else if (this.selection.selectedNest !== null) {
+          this.issue({ type: 'setRally', target: p, nestId: this.selection.selectedNest });
+          marker(MARKER_COLORS.move);
+        }
+        return;
+      case 'move':
+        this.issue({ type: 'move', antIds: ids, target: p });
+        return marker(MARKER_COLORS.move);
+      case 'attack': {
+        const creature = this.visibleCreatureAt(p);
+        const enemy = this.visibleEnemyAt(p);
+        const nest = this.knownEnemyNestAt(p);
+        if (creature) this.issue({ type: 'attack', antIds: ids, target: { creature: creature.id } });
+        else if (enemy) this.issue({ type: 'attack', antIds: ids, target: { ant: enemy.id } });
+        else if (nest) this.issue({ type: 'attack', antIds: ids, target: { nest: nest.id } });
+        else this.issue({ type: 'attackMove', antIds: ids, target: p });
+        return marker(MARKER_COLORS.attack);
+      }
+      case 'gather': {
+        const foodId = this.knownFoodAt(p);
+        if (foodId === null) return this.hud.toast('Click a food source you have found');
+        this.issue({ type: 'gather', antIds: ids, foodId });
+        return marker(MARKER_COLORS.gather);
+      }
+      case 'explore':
+        this.issue({ type: 'explore', antIds: ids, target: p });
+        return marker(MARKER_COLORS.explore);
+      case 'rally':
+        if (this.selection.selectedNest === null) return;
+        this.issue({ type: 'setRally', target: p, nestId: this.selection.selectedNest });
+        return marker(MARKER_COLORS.move);
+      case 'found':
+        return this.foundAt(p);
+    }
   }
 
   private foundAt(p: Point): void {
     const queen = this.selectedQueens.find((q) => q.task.kind !== 'found') ?? this.selectedQueens[0];
-    const hud = this.scene.get('Hud') as HudScene;
-    if (!queen) return this.setFoundMode(false);
+    if (!queen) return;
     const blocker = foundBlocker(this.state, this.player.id, worldToTile(p.x), worldToTile(p.y));
     if (blocker) {
-      hud.toast(`Can't found a nest there: ${blocker}`);
+      this.selection.targeting = 'found'; // let them try another spot
+      this.hud.toast(`Can't found a nest there: ${blocker}`);
       return;
     }
     this.issue({ type: 'found', antId: queen.id, target: p });
-    this.selection.foundMode = false;
-    hud.toast('The queen sets off to found a new nest');
+    this.hud.toast('The queen sets off to found a new nest');
   }
 
   openUnderground(): void {
     const nest = this.selectedNest ?? this.player.nests[0];
     if (!nest) return;
     this.selection.buildMode = false;
-    this.selection.foundMode = false;
+    this.selection.targeting = null;
     this.scene.launch('Underground', { nestId: nest.id });
     this.scene.bringToTop('Underground');
   }
@@ -226,7 +353,7 @@ export class GameScene extends Phaser.Scene {
     this.selection.buildMode = on;
     if (on) {
       this.selection.clear();
-      this.selection.foundMode = false;
+      this.selection.targeting = null;
     }
   }
 
@@ -411,7 +538,7 @@ export class GameScene extends Phaser.Scene {
       g.fillStyle(frac > 0.5 ? 0x6ad04a : frac > 0.25 ? 0xe0b13a : 0xe04a3a).fillRect(c.x - w / 2, top, w * frac, 5);
     }
 
-    if (this.selection.foundMode) {
+    if (this.selection.targeting === 'found') {
       // Show the no-go zone around every known nest and whether the cursor spot works.
       for (const { nest } of allNests(this.state)) {
         if (!isExploredBy(this.state, this.player.id, nest.tile.x, nest.tile.y)) continue;

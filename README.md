@@ -63,22 +63,18 @@ Dev shortcut: add `?seed=12345` (optionally `&difficulty=easy|medium|hard`) to t
 
 ## Controls
 
-Works with a trackpad or a mouse.
+The screen is laid out like StarCraft: **resources across the top** (food and upkeep, ants and capacity, an idle-worker button, Help and Menu), and across the bottom the **minimap**, **details of the selection**, and a **command card** whose buttons show their hotkeys and explain themselves on hover. Press **?** (or F1) in game for the full list.
 
 | Input | Action |
 |---|---|
-| Left-click an ant | Select it (Shift+click toggles it in the selection) |
-| Left-drag | Box-select your ants (Shift adds to the selection) |
-| Left-click a food source | Select it; use **−** / **+** in the panel to set how many workers gather it |
-| Left-click a nest, or press **H** (again to cycle nests) | Select it: train workers / soldiers / queens there, click a queued ant to cancel (refunded) |
-| U | Underground view of the selected nest (U / Esc to return) |
-| F (with a queen selected) | Pick a site for the queen to found a new nest |
-| Right-click / two-finger click / Ctrl+click | Order selected ants: on an **enemy ant, spider or nest** attack it, on **food** gather it, in **black fog** explore that area, otherwise move. With the nest selected: set the rally point |
-| Two-finger swipe, mouse wheel, WASD / arrows, right- or middle-drag | Pan |
-| Pinch, Ctrl+wheel, Q / E | Zoom |
-| B | Wall build mode: drag to plan walls, right-drag (or Ctrl-drag) to remove |
-| Esc | Back out: leave build mode, then clear the selection, then pause (Save / Save & quit) |
-| P | Pause / resume |
+| Left-click / drag | Select ants (Shift adds), or click a nest or food source |
+| Right-click / two-finger click / Ctrl+click | Context order: attack an enemy, spider or nest; gather food; explore black fog; otherwise move. With a nest selected: set its rally point |
+| Command card letters | M move, S stop, A attack (click a target, or ground to **attack-move**), X explore, G gather, R return home / rally, B walls, F found nest, U underground, W/S/Q train worker/soldier/queen, E/D add/remove gatherers or builders |
+| Minimap | Click or drag to look; right-click to order the selection there |
+| Swipe / wheel, arrows, right-/middle-drag, pointer at screen edge | Pan |
+| Pinch / Ctrl+wheel, + / - | Zoom |
+| H / . | Cycle through your nests / select idle workers |
+| Esc / P / ? | Back out (cancel, deselect, then pause) / pause / help |
 
 ## Roadmap
 
@@ -91,4 +87,5 @@ Works with a trackpad or a mouse.
 - [x] **Phase 6:** neutral creatures (spiders), pebble walls, save/load
 - [x] **Phase 7:** underground view (auto-growing first), queens founding new colonies
 - [x] Real art: built-in illustrated sprites with walk cycles and blended terrain (overridable with your own images)
+- [x] StarCraft-style HUD: top resource bar, minimap, selection panel, command card with hotkeys
 - [ ] Player-directed digging underground (choose which chambers to dig)

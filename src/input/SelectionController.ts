@@ -11,6 +11,9 @@ const BOX_COLOR = 0x7dff6a;
 
 type Gesture = 'none' | 'select' | 'command' | 'paint';
 
+/** Commands that wait for a click on the map (StarCraft-style targeting). */
+export type TargetKind = 'move' | 'attack' | 'gather' | 'explore' | 'rally' | 'found';
+
 export interface SelectionOptions {
   colony: ColonyId;
   getState: () => GameState;
@@ -22,8 +25,8 @@ export interface SelectionOptions {
   foodAt: (p: Point) => number | null;
   /** Id of this player's nest under a world point, if any. */
   nestAt: (p: Point) => number | null;
-  /** Founding mode: a left-click picks the site for the selected queen's new nest. */
-  onFoundSite: (p: Point) => void;
+  /** Targeting mode: a left-click completes the pending command at that point. */
+  onTarget: (kind: TargetKind, p: Point) => void;
   /** True when a screen point is over HUD UI, so the click is not for the world. */
   isOverUi: (sx: number, sy: number) => boolean;
   /** Build mode: plan (or with erase, remove) a wall on the tile under a world point. */
@@ -44,7 +47,8 @@ export class SelectionController {
   /** Id of the selected nest, if a nest is selected. */
   selectedNest: number | null = null;
   buildMode = false;
-  foundMode = false;
+  /** Pending targeted command; left-click places it, right-click or Esc cancels. */
+  targeting: TargetKind | null = null;
   private eraseStroke = false;
   private gesture: Gesture = 'none';
   private start = new Phaser.Math.Vector2();
@@ -108,9 +112,11 @@ export class SelectionController {
     const isCommand = p.button === 2 || p.button === 1 || (p.button === 0 && ev.ctrlKey);
     this.start.set(p.x, p.y);
     this.dragging = false;
-    if (this.foundMode) {
+    if (this.targeting) {
       this.gesture = 'none';
-      if (!isCommand) this.opts.onFoundSite(this.camera.screenToWorld(p.x, p.y));
+      const kind = this.targeting;
+      if (isCommand) this.targeting = null;
+      else this.opts.onTarget(kind, this.camera.screenToWorld(p.x, p.y));
       return;
     }
     if (this.buildMode) {
@@ -226,6 +232,11 @@ export class SelectionController {
     if (!toggle) this.selected.clear();
     if (toggle && this.selected.has(best)) this.selected.delete(best);
     else this.selected.add(best);
+  }
+
+  /** Brief shrinking ring where an order was given. */
+  flashMarker(at: Point, color: number): void {
+    this.showMarker(at, color);
   }
 
   private showMarker(at: Point, color: number): void {

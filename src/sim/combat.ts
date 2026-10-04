@@ -57,7 +57,7 @@ export function startAttack(ant: Ant, target: AttackTarget, then: Task | null, l
 // ---------------------------------------------------------------- target selection
 
 /**
- * Idle soldiers (and explorers, and raiders on the way to a nest) attack the
+ * Idle soldiers (and explorers, attack-movers and raiders on the way) attack the
  * nearest visible enemy or wild creature in aggro range. Idle ants of any type
  * fight back when bitten. Gatherers and builders keep working, and a plain move
  * order is never interrupted, so the player can always retreat.
@@ -65,7 +65,8 @@ export function startAttack(ant: Ant, target: AttackTarget, then: Task | null, l
 function seekFight(state: GameState, ant: Ant, lookup: Lookup): void {
   const task = ant.task;
   const raiding = task.kind === 'attack' && 'nest' in task.target;
-  const canSeek = (task.kind === 'idle' && !isMoving(ant)) || task.kind === 'explore' || raiding;
+  const canSeek =
+    (task.kind === 'idle' && !isMoving(ant)) || task.kind === 'explore' || task.kind === 'attackMove' || raiding;
   if (!canSeek) {
     ant.lastAttacker = null;
     return;

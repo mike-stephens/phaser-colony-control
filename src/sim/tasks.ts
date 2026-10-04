@@ -47,6 +47,7 @@ export function updateTasks(state: GameState, rng: Rng): void {
     else if (task.kind === 'explore') updateExplore(state, ant, task, rng);
     else if (task.kind === 'build') updateBuild(state, ant, task, rng);
     else if (task.kind === 'found') updateFound(state, ant, task);
+    else if (task.kind === 'attackMove') updateAttackMove(ant, task);
   }
 }
 
@@ -259,6 +260,18 @@ function nearestPlan(state: GameState, ant: Ant, plans: Wall[]): Wall {
     }
   }
   return best;
+}
+
+// ---------------------------------------------------------------- attack-move
+
+/** Keeps heading for the destination (fights are started by combat.seekFight and resume this task). */
+function updateAttackMove(ant: Ant, task: Extract<Task, { kind: 'attackMove' }>): void {
+  if (isMoving(ant)) return;
+  if (dist(ant, task.target) <= ARRIVE_DIST || task.retries++ >= MAX_RETRIES) {
+    ant.task = { kind: 'idle' };
+    return;
+  }
+  ant.moveTarget = { ...task.target };
 }
 
 // ---------------------------------------------------------------- founding

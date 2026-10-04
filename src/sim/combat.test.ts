@@ -87,6 +87,41 @@ describe('fighting', () => {
   });
 });
 
+describe('attack-move and stop', () => {
+  /** A black soldier squad and a red worker standing on their route. */
+  function ambush() {
+    const state = quietGame();
+    const squad = own(state, 'black', 'soldier');
+    const from = squad[0];
+    const target = { x: from.x + 10 * 32, y: from.y };
+    const blocker = spawn(state, 'red', 'worker', { x: from.x + 4 * 32, y: from.y });
+    blocker.hp = 1e6; // survives long enough to see who stops for it
+    return { state, squad, target, blocker };
+  }
+
+  it('attack-moving soldiers fight enemies on the way', () => {
+    const { state, squad, target } = ambush();
+    issueCommand(state, 'black', { type: 'attackMove', antIds: squad.map((a) => a.id), target });
+    run(state, 20 * 8);
+    expect(squad.some((a) => a.task.kind === 'attack')).toBe(true);
+  });
+
+  it('a plain move walks past them', () => {
+    const { state, squad, target } = ambush();
+    issueCommand(state, 'black', { type: 'move', antIds: squad.map((a) => a.id), target });
+    run(state, 20 * 4);
+    expect(squad.every((a) => a.task.kind !== 'attack')).toBe(true);
+  });
+
+  it('stop halts ants and clears their jobs', () => {
+    const { state, squad, target } = ambush();
+    issueCommand(state, 'black', { type: 'attackMove', antIds: squad.map((a) => a.id), target });
+    run(state, 5);
+    issueCommand(state, 'black', { type: 'stop', antIds: squad.map((a) => a.id) });
+    expect(squad.every((a) => a.task.kind === 'idle' && a.path.length === 0 && a.moveTarget === null)).toBe(true);
+  });
+});
+
 describe('nests and victory', () => {
   it('raiders destroy a discovered nest and win the game', () => {
     const state = quietGame();
