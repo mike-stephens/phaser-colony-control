@@ -8,11 +8,17 @@ export interface FoodSite {
   amount: number;
 }
 
+export interface PebbleSite {
+  tile: TilePos;
+  amount: number;
+}
+
 export interface GeneratedWorld {
   map: GameMap;
   /** Nest locations, one per colony. Index 0 is the player. */
   nestSites: TilePos[];
   foodSites: FoodSite[];
+  pebbleSites: PebbleSite[];
 }
 
 /**
@@ -36,7 +42,43 @@ export function generateWorld(seed: number, width: number, height: number): Gene
   }
 
   const foodSites = placeFood(map, rng, nestSites);
-  return { map, nestSites, foodSites };
+  const pebbleSites = placePebbles(map, rng, nestSites, foodSites.map((f) => f.tile));
+  return { map, nestSites, foodSites, pebbleSites };
+}
+
+/**
+ * Pebble piles: one guaranteed in view of each nest, the rest scattered
+ * beside rocks (where pebbles would naturally collect).
+ */
+function placePebbles(map: GameMap, rng: Rng, nests: TilePos[], taken: TilePos[]): PebbleSite[] {
+  const sites: PebbleSite[] = [];
+  const used = () => [...taken, ...sites.map((s) => s.tile)];
+  const clear = (t: TilePos) =>
+    isWalkable(map, t.x, t.y) && used().every((u) => Math.hypot(u.x - t.x, u.y - t.y) >= 3);
+
+  for (const nest of nests) {
+    for (let attempt = 0; attempt < 300; attempt++) {
+      const a = rng.next() * Math.PI * 2;
+      const r = rng.int(4, 6);
+      const t = { x: Math.round(nest.x + Math.cos(a) * r), y: Math.round(nest.y + Math.sin(a) * r) };
+      if (clear(t)) {
+        sites.push({ tile: t, amount: rng.int(40, 60) });
+        break;
+      }
+    }
+  }
+
+  const target = sites.length + Math.round((map.width * map.height) / 900);
+  for (let attempt = 0; attempt < 4000 && sites.length < target; attempt++) {
+    const t = { x: rng.int(2, map.width - 3), y: rng.int(2, map.height - 3) };
+    const besideRock = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(
+      ([dx, dy]) => inBounds(map, t.x + dx, t.y + dy) && map.tiles[(t.y + dy) * map.width + t.x + dx] === Terrain.Rock,
+    );
+    if (besideRock && clear(t) && nests.every((n) => Math.hypot(n.x - t.x, n.y - t.y) >= 8)) {
+      sites.push({ tile: t, amount: rng.int(25, 50) });
+    }
+  }
+  return sites;
 }
 
 const FOOD_KINDS: FoodKind[] = ['crumbs', 'seeds', 'berries'];

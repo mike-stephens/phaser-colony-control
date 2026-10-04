@@ -1,6 +1,9 @@
 import Phaser from 'phaser';
 import type { AntType } from '../sim/ants';
-import { gatherersOf } from '../sim/commands';
+import { buildersOf, gatherersOf } from '../sim/commands';
+import { isExploredBy } from '../sim/fog';
+import { worldToTile } from '../sim/map';
+import { WALL_PEBBLES, openPlans } from '../sim/walls';
 import {
   ANT_COST,
   MAX_QUEUE,
@@ -16,9 +19,14 @@ import type { GameScene } from './GameScene';
 
 const HELP =
   'Left-click/drag: select ants, food or nest (H)   Right-click (two-finger, Ctrl+click): attack / gather / explore fog / move / rally\n' +
-  'Swipe/wheel, WASD, right-drag: pan   Pinch, Ctrl+wheel, Q/E: zoom   Esc: deselect / menu';
+  'Swipe/wheel, WASD, right-drag: pan   Pinch, Ctrl+wheel, Q/E: zoom   B: build walls   Esc: back / pause';
 
-const FOOD_NAMES: Record<FoodKind, string> = { crumbs: 'Bread crumbs', seeds: 'Seeds', berries: 'Berries' };
+const FOOD_NAMES: Record<FoodKind, string> = {
+  crumbs: 'Bread crumbs',
+  seeds: 'Seeds',
+  berries: 'Berries',
+  carcass: 'Spider carcass',
+};
 const ANT_NAMES: Record<AntType, string> = { worker: 'Worker', soldier: 'Soldier', queen: 'Queen' };
 const TRAINABLE: AntType[] = ['worker', 'soldier', 'queen'];
 
@@ -91,6 +99,13 @@ export class HudScene extends Phaser.Scene {
   private progress!: Phaser.GameObjects.Graphics;
   private nestHint!: Phaser.GameObjects.Text;
 
+  private buildPanel!: Phaser.GameObjects.Container;
+  private buildInfo!: Phaser.GameObjects.Text;
+
+  private pauseMenu!: Phaser.GameObjects.Container;
+  private toastText!: Phaser.GameObjects.Text;
+  private toastUntil = 0;
+
   constructor() {
     super('Hud');
   }
@@ -111,7 +126,14 @@ export class HudScene extends Phaser.Scene {
     this.help = this.add.text(10, 0, HELP, TEXT_STYLE).setOrigin(0, 1);
     this.createFoodPanel();
     this.createNestPanel();
+    this.createBuildPanel();
+    this.createPauseMenu();
     this.createGameOver();
+    this.toastText = this.add
+      .text(0, 0, '', { ...TEXT_STYLE, backgroundColor: '#1f5a1f' })
+      .setOrigin(0.5, 0)
+      .setVisible(false)
+      .setDepth(200);
     this.layout();
     this.scale.on('resize', this.layout, this);
     this.events.once('shutdown', () => this.scale.off('resize', this.layout, this));
@@ -119,8 +141,14 @@ export class HudScene extends Phaser.Scene {
 
   /** Lets the game scene ignore clicks that land on HUD controls. */
   isOverUi(sx: number, sy: number): boolean {
-    if (this.gameOver?.visible) return true;
-    return [this.foodPanel, this.nestPanel].some((p) => p?.visible && p.getBounds().contains(sx, sy));
+    if (this.gameOver?.visible || this.pauseMenu?.visible) return true;
+    return [this.foodPanel, this.nestPanel, this.buildPanel].some((p) => p?.visible && p.getBounds().contains(sx, sy));
+  }
+
+  /** Brief message at the top of the screen. */
+  toast(message: string): void {
+    this.toastText.setText(message).setVisible(true);
+    this.toastUntil = this.time.now + 2000;
   }
 
   update(): void {
@@ -140,7 +168,7 @@ export class HudScene extends Phaser.Scene {
     const total = own.worker + own.soldier + own.queen;
     const due = upkeepDue(state, player.id);
     this.status.setText(
-      `${clock(state.tick)}  [${state.difficulty}]   Food: ${player.food}   Eats ${due} every ${seconds(UPKEEP_INTERVAL_TICKS)}s (next in ${seconds(ticksUntilUpkeep(state))}s)   ` +
+      `${clock(state.tick)}${game.paused ? ' PAUSED' : ''}  [${state.difficulty}]   Food: ${player.food}   Eats ${due} every ${seconds(UPKEEP_INTERVAL_TICKS)}s (next in ${seconds(ticksUntilUpkeep(state))}s)   ` +
         `Ants: ${total}/${POPULATION_CAP}  W${own.worker} S${own.soldier} Q${own.queen}   Idle workers: ${idleWorkers}` +
         (selectedCount > 0 ? `   Selected: ${selectedCount}` : ''),
     );
@@ -153,6 +181,9 @@ export class HudScene extends Phaser.Scene {
       .setVisible((nestHit || antsHit) && state.winner === null);
 
     this.updateGameOver();
+    this.updateBuildPanel(own.worker);
+    this.pauseMenu.setVisible(game.paused && state.winner === null);
+    if (this.toastText.visible && this.time.now > this.toastUntil) this.toastText.setVisible(false);
 
     this.updateFoodPanel(own.worker);
     this.updateNestPanel(total);
@@ -200,7 +231,8 @@ export class HudScene extends Phaser.Scene {
     );
     this.progress = this.add.graphics();
     this.nestHint = this.add.text(0, 124, '', { ...PLAIN, color: '#bbbbbb', fontSize: '12px' });
-    const bg = this.panelBackground(150);
+    const walls = new Button(this, 0, 146, 'Build walls (B)', () => this.game_.setBuildMode(true));
+    const bg = this.panelBackground(184);
     this.nestPanel = this.add
       .container(0, 0, [
         bg,
@@ -210,6 +242,7 @@ export class HudScene extends Phaser.Scene {
         ...this.queueButtons.map((b) => b.text),
         this.progress,
         this.nestHint,
+        walls.text,
       ])
       .setVisible(false);
   }
@@ -243,6 +276,67 @@ export class HudScene extends Phaser.Scene {
     this.nestHint.setText(
       `${hint}${blockedAll && blockedAll !== 'Not enough food' ? blockedAll + '. ' : ''}Right-click the map to set the rally point.`,
     );
+  }
+
+  // ---------------------------------------------------------------- build panel
+
+  private createBuildPanel(): void {
+    this.buildInfo = this.add.text(0, 0, '', { ...PLAIN, lineSpacing: 4 });
+    const minus = new Button(this, 0, 124, '  −  ', () => this.adjustBuilders(-1));
+    const plus = new Button(this, 60, 124, '  +  ', () => this.adjustBuilders(1));
+    const done = new Button(this, 150, 124, ' Done (B) ', () => this.game_.setBuildMode(false));
+    const bg = this.panelBackground(164);
+    this.buildPanel = this.add.container(0, 0, [bg, this.buildInfo, minus.text, plus.text, done.text]).setVisible(false);
+  }
+
+  private updateBuildPanel(workers: number): void {
+    const { state, player, selection } = this.game_;
+    this.buildPanel.setVisible(selection.buildMode && state.winner === null);
+    if (!this.buildPanel.visible) return;
+    const plans = openPlans(state, player.id);
+    const built = Object.values(state.walls).filter((w) => w.owner === player.id && w.built).length;
+    const needed = plans.reduce((n, w) => n + WALL_PEBBLES - w.pebbles, 0);
+    const knownPebbles = state.pebbles
+      .filter((p) => isExploredBy(state, player.id, worldToTile(p.x), worldToTile(p.y)))
+      .reduce((n, p) => n + p.amount, 0);
+    const builders = buildersOf(state, player.id).length;
+    this.buildInfo.setText(
+      [
+        'WALL BUILDING',
+        'Drag: plan walls   Right-drag: remove',
+        `Plans: ${plans.length} (need ${needed} pebbles)   Built: ${built}`,
+        knownPebbles > 0 ? `Known pebbles: ${knownPebbles}` : 'No pebbles found yet: explore near rocks',
+        `Builders: ${builders} of ${workers} workers`,
+      ].join('\n'),
+    );
+  }
+
+  private adjustBuilders(delta: number): void {
+    const game = this.game_;
+    const current = buildersOf(game.state, game.player.id).length;
+    game.issue({ type: 'setBuilders', count: Math.max(0, current + delta) });
+  }
+
+  // ---------------------------------------------------------------- pause menu
+
+  private createPauseMenu(): void {
+    const dim = this.add.rectangle(0, 0, 10, 10, 0x000000, 0.5).setOrigin(0).setName('dim');
+    const card = this.add.rectangle(0, 0, 360, 300, 0x111111, 0.95).setStrokeStyle(2, ACCENT);
+    const title = this.add.text(0, -110, 'PAUSED', { fontFamily: 'monospace', fontSize: '36px', color: '#ffffff' }).setOrigin(0.5);
+    const buttons = [
+      new Button(this, 0, -40, '      Resume      ', () => this.game_.togglePause()),
+      new Button(this, 0, 10, '    Save game     ', () => this.toast(this.game_.save() ? 'Game saved' : 'Could not save (storage full or blocked)')),
+      new Button(this, 0, 60, ' Save & quit to menu ', () => {
+        if (this.game_.save()) this.game_.toMenu();
+        else this.toast('Could not save (storage full or blocked)');
+      }),
+      new Button(this, 0, 110, ' Quit without saving ', () => this.game_.toMenu()),
+    ];
+    for (const b of buttons) b.text.setFontSize(18).setOrigin(0.5);
+    this.pauseMenu = this.add
+      .container(0, 0, [dim, card, title, ...buttons.map((b) => b.text)])
+      .setVisible(false)
+      .setDepth(150);
   }
 
   // ---------------------------------------------------------------- game over
@@ -313,5 +407,11 @@ export class HudScene extends Phaser.Scene {
     const x = this.scale.width - PANEL_WIDTH;
     this.foodPanel.setPosition(x, 80);
     this.nestPanel.setPosition(x, 80);
+    this.buildPanel.setPosition(x, 80);
+    this.toastText.setPosition(width / 2, 110);
+    this.pauseMenu.setPosition(width / 2, height / 2);
+    (this.pauseMenu.getByName('dim') as Phaser.GameObjects.Rectangle)
+      .setPosition(-width / 2, -height / 2)
+      .setSize(width, height);
   }
 }

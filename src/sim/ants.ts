@@ -25,7 +25,7 @@ export const ANT_STATS: Record<AntType, AntStats> = {
   queen: { speed: 36, maxHp: 40, radius: 10, sight: 3, damage: 3, attackCooldown: 20, aggroRange: 0 },
 };
 
-export type AttackTarget = { ant: number } | { nest: ColonyId };
+export type AttackTarget = { ant: number } | { nest: ColonyId } | { creature: number };
 
 /**
  * What an ant is doing beyond its current path. A plain move order leaves the
@@ -45,6 +45,13 @@ export type Task =
       retries: number;
       /** Where the last food came from, to find a replacement when it runs out. */
       lastFoodPos: Point;
+    }
+  | {
+      kind: 'build';
+      phase: 'toPile' | 'collecting' | 'toSite';
+      /** Ticks left picking up a pebble. */
+      timer: number;
+      retries: number;
     }
   | {
       kind: 'attack';
@@ -80,8 +87,12 @@ export interface Ant {
   cooldown: number;
   /** Tick of this ant's most recent bite (for the lunge animation); -1 = never. */
   lastAttackTick: number;
-  /** Id of the last ant that bit this one, until it reacts. */
-  lastAttacker: number | null;
+  /** The last ant or creature that bit this one, until it reacts. */
+  lastAttacker: AttackTarget | null;
+  /** Carrying a pebble to a wall plan. */
+  pebble: boolean;
+  /** Tile index of an enemy wall this ant has walked into and is chewing through. */
+  blockedWall: number | null;
 }
 
 export function createAnt(id: number, colony: ColonyId, type: AntType, pos: Point): Ant {
@@ -102,6 +113,8 @@ export function createAnt(id: number, colony: ColonyId, type: AntType, pos: Poin
     cooldown: 0,
     lastAttackTick: -1,
     lastAttacker: null,
+    pebble: false,
+    blockedWall: null,
   };
 }
 

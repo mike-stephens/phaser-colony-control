@@ -11,7 +11,7 @@ const run = (state: GameState, ticks: number) => {
 /** A game with upkeep and AI switched off, so food totals are exact. */
 const quietGame = (seed: number) => {
   const state = createNewGame(seed);
-  state.rules = { upkeep: false, ai: false, foodRegrowth: false };
+  state.rules = { upkeep: false, ai: false, foodRegrowth: false, wildlife: false };
   return state;
 };
 const workersOf = (state: GameState) => state.ants.filter((a) => a.colony === 'black' && a.type === 'worker');

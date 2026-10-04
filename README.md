@@ -33,6 +33,12 @@ Dev shortcut: add `?seed=12345` (optionally `&difficulty=easy|medium|hard`) to t
 - Nests have 1000 HP and slowly regenerate when left alone. **Destroy the red nest to win; lose yours and it's over.** A colony with no ants and no food left to train one is also out.
 - **Difficulty** (chosen on the menu) changes when and how hard red attacks: Easy from ~10 min in small groups, Medium from ~6 min, Hard from ~4 min in large waves. Red also gathers 0.8× food on Easy and 1.25× on Hard; otherwise it plays by your rules and only knows what its own fog shows.
 
+## Wildlife, walls and saving
+
+- **Spiders** appear from about 3 minutes in (2 at first, up to 4 later), far from both nests. They hunt any ant that strays within 5 tiles of their territory, whichever colony it belongs to. A group of soldiers can take one down, and a dead spider leaves a 120-food carcass.
+- **Walls:** press **B** (or use the nest panel) to enter build mode, drag to plan wall tiles, and set the number of builders with **−/+**. Builders carry pebbles from known pebble piles (found near rocks; one is always near your nest), 3 per wall tile. **Your ants pass through your own walls; enemies (and spiders) must go around, or chew through** (300 HP each). Walls can't block nest entrances.
+- **Saving:** **Esc** (with nothing selected) pauses, with Save / Save & quit. The game also autosaves every 2 minutes. Saves live in this browser's local storage; **Load game** on the menu lists them.
+
 ## Controls
 
 Works with a trackpad or a mouse.
@@ -43,10 +49,12 @@ Works with a trackpad or a mouse.
 | Left-drag | Box-select your ants (Shift adds to the selection) |
 | Left-click a food source | Select it; use **−** / **+** in the panel to set how many workers gather it |
 | Left-click your nest, or press **H** | Select the nest: train workers / soldiers / queens, click a queued ant to cancel (refunded) |
-| Right-click / two-finger click / Ctrl+click | Order selected ants: on an **enemy ant or nest** attack it, on **food** gather it, in **black fog** explore that area, otherwise move. With the nest selected: set the rally point |
+| Right-click / two-finger click / Ctrl+click | Order selected ants: on an **enemy ant, spider or nest** attack it, on **food** gather it, in **black fog** explore that area, otherwise move. With the nest selected: set the rally point |
 | Two-finger swipe, mouse wheel, WASD / arrows, right- or middle-drag | Pan |
 | Pinch, Ctrl+wheel, Q / E | Zoom |
-| Esc | Clear the selection (press again for the menu) |
+| B | Wall build mode: drag to plan walls, right-drag (or Ctrl-drag) to remove |
+| Esc | Back out: leave build mode, then clear the selection, then pause (Save / Save & quit) |
+| P | Pause / resume |
 
 ## Roadmap
 
@@ -56,6 +64,6 @@ Works with a trackpad or a mouse.
 - [x] **Phase 3:** fog of war, exploring, food sources, gathering with worker counts
 - [x] **Phase 4:** colony economy: food stockpile, spawning, upkeep
 - [x] **Phase 5:** combat, soldiers, red AI colony (easy / medium / hard), win/lose
-- [ ] **Phase 6:** neutral creatures (spiders), pebble walls, save/load
+- [x] **Phase 6:** neutral creatures (spiders), pebble walls, save/load
 - [ ] **Phase 7:** underground view (auto-growing first), queens founding new colonies
 - [ ] Real art: free asset packs and/or custom sprites

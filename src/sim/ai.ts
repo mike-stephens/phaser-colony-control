@@ -1,5 +1,5 @@
 import { TILE_SIZE } from '../config';
-import { Ant, isMoving } from './ants';
+import { Ant, AttackTarget, isMoving } from './ants';
 import { gatherersOf, issueCommand } from './commands';
 import { AI_PROFILES, AiProfile } from './difficulty';
 import { ANT_COST, trainBlocker, upkeepDue } from './economy';
@@ -105,16 +105,17 @@ function train(state: GameState, colony: Colony, profile: AiProfile, openSlots: 
 /** Sends every soldier not already fighting at the intruder nearest the nest. Returns true if defending. */
 function defend(state: GameState, colony: Colony): boolean {
   const nest = nestPoint(state, colony.id);
-  let intruder: Ant | null = null;
+  let intruder: AttackTarget | null = null;
   let best = DEFENCE_RADIUS * TILE_SIZE;
-  for (const a of state.ants) {
-    if (a.colony === colony.id) continue;
-    const d = Math.hypot(a.x - nest.x, a.y - nest.y);
-    if (d < best && isVisibleTo(state, colony.id, worldToTile(a.x), worldToTile(a.y))) {
-      intruder = a;
+  const consider = (p: Point, target: AttackTarget) => {
+    const d = Math.hypot(p.x - nest.x, p.y - nest.y);
+    if (d < best && isVisibleTo(state, colony.id, worldToTile(p.x), worldToTile(p.y))) {
+      intruder = target;
       best = d;
     }
-  }
+  };
+  for (const a of state.ants) if (a.colony !== colony.id) consider(a, { ant: a.id });
+  for (const c of state.creatures) consider(c, { creature: c.id });
   if (!intruder) return false;
 
   const defenders = state.ants.filter(
@@ -124,7 +125,7 @@ function defend(state: GameState, colony: Colony): boolean {
     issueCommand(state, colony.id, {
       type: 'attack',
       antIds: defenders.map((a) => a.id),
-      target: { ant: intruder.id },
+      target: intruder,
     });
   }
   return true;

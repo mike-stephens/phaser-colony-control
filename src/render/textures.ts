@@ -23,6 +23,8 @@ const TERRAIN_COLORS: Record<Terrain, number> = {
 const COLONY_FILL: Record<ColonyId, number> = { black: 0x141414, red: 0xb83224 };
 const COLONY_EDGE: Record<ColonyId, number> = { black: 0x6a6a6a, red: 0x5e140d };
 
+export const SPIDER_TEXTURE = 'spider';
+
 export function antTextureKey(colony: ColonyId, type: AntType): string {
   return `ant-${colony}-${type}`;
 }
@@ -35,6 +37,37 @@ export function generatePlaceholderTextures(scene: Phaser.Scene): void {
       generateAnt(scene, colony, type);
     }
   }
+  generateSpider(scene);
+}
+
+/** Spider facing +x: two body segments and eight bent legs. */
+function generateSpider(scene: Phaser.Scene): void {
+  const size = 44;
+  const c = size / 2;
+  const g = scene.make.graphics({}, false);
+  g.lineStyle(2, 0x2a1d33);
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      const ox = c - 3 + i * 3;
+      const kneeX = c - 10 + i * 8;
+      g.beginPath();
+      g.moveTo(ox, c);
+      g.lineTo(kneeX, c + side * 12);
+      g.lineTo(kneeX + (i < 2 ? -6 : 6), c + side * 20);
+      g.strokePath();
+    }
+  }
+  g.fillStyle(0x3d2a4d);
+  g.lineStyle(1, 0x7a5c8f);
+  g.fillEllipse(c - 6, c, 18, 15);
+  g.strokeEllipse(c - 6, c, 18, 15);
+  g.fillCircle(c + 6, c, 6);
+  g.strokeCircle(c + 6, c, 6);
+  g.fillStyle(0xd94a4a);
+  g.fillCircle(c + 9, c - 2, 1.2);
+  g.fillCircle(c + 9, c + 2, 1.2);
+  g.generateTexture(SPIDER_TEXTURE, size, size);
+  g.destroy();
 }
 
 function generateTerrain(scene: Phaser.Scene): void {

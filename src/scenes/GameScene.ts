@@ -2,11 +2,14 @@ import Phaser from 'phaser';
 import { TILE_SIZE } from '../config';
 import { CameraController } from '../input/CameraController';
 import { SelectionController } from '../input/SelectionController';
+import { deleteSave, writeSave } from '../persistence/saves';
 import { AntLayer } from '../render/AntLayer';
+import { CreatureLayer } from '../render/CreatureLayer';
 import { DEPTH } from '../render/depths';
 import { FogLayer } from '../render/FogLayer';
 import { FoodLayer } from '../render/FoodLayer';
 import { TERRAIN_TEXTURE, generatePlaceholderTextures } from '../render/textures';
+import { WallLayer } from '../render/WallLayer';
 import { ANT_STATS, Ant } from '../sim/ants';
 import { Command, issueCommand } from '../sim/commands';
 import { Difficulty } from '../sim/difficulty';
@@ -16,33 +19,50 @@ import { Point, worldToTile } from '../sim/map';
 import { randomSeed } from '../sim/rng';
 import { TICK_MS, stepSimulation } from '../sim/simulation';
 import { Colony, ColonyId, GameState, NEST_MAX_HP, NEST_RADIUS, createNewGame, nestPoint } from '../sim/state';
+import { wallPlanBlocker } from '../sim/walls';
+import { CREATURE_STATS, Creature } from '../sim/wildlife';
 import type { HudScene } from './HudScene';
 
 const COLONY_COLORS = { black: 0x111111, red: 0xc0392b } as const;
 const MARKER_COLORS = { move: 0x7dff6a, explore: 0x6ac8ff, gather: 0xffe14d, attack: 0xff4d4d } as const;
 /** Cap on catch-up after a long frame (e.g. a backgrounded tab). */
 const MAX_FRAME_MS = 250;
+/** Game time between autosaves (ticks). */
+const AUTOSAVE_TICKS = 20 * 120;
+
+export interface GameSceneData {
+  seed?: number;
+  difficulty?: Difficulty;
+  /** A saved game to resume instead of starting a new one. */
+  load?: GameState;
+}
 
 export class GameScene extends Phaser.Scene {
   state!: GameState;
   player!: Colony;
   selection!: SelectionController;
+  paused = false;
   private cameraCtl!: CameraController;
   private ants!: AntLayer;
+  private creatures!: CreatureLayer;
   private foods!: FoodLayer;
+  private walls!: WallLayer;
   private fog!: FogLayer;
   private overlay!: Phaser.GameObjects.Graphics;
   private nests = new Map<ColonyId, Phaser.GameObjects.Arc>();
   private accumulator = 0;
+  private lastAutosaveTick = 0;
 
   constructor() {
     super('Game');
   }
 
-  init(data: { seed: number; difficulty?: Difficulty }): void {
-    this.state = createNewGame(data.seed, data.difficulty ?? 'medium');
+  init(data: GameSceneData): void {
+    this.state = data.load ?? createNewGame(data.seed ?? randomSeed(), data.difficulty ?? 'medium');
     this.player = this.state.colonies.find((c) => c.isPlayer)!;
     this.accumulator = 0;
+    this.paused = false;
+    this.lastAutosaveTick = this.state.tick;
     this.nests.clear();
   }
 
@@ -51,8 +71,10 @@ export class GameScene extends Phaser.Scene {
     generatePlaceholderTextures(this);
     this.drawMap();
     this.drawNests();
+    this.walls = new WallLayer(this);
     this.foods = new FoodLayer(this);
     this.ants = new AntLayer(this);
+    this.creatures = new CreatureLayer(this);
     this.fog = new FogLayer(this, map.width, map.height);
     this.overlay = this.add.graphics().setDepth(DEPTH.overlay);
 
@@ -65,15 +87,22 @@ export class GameScene extends Phaser.Scene {
       foodAt: (p) => this.knownFoodAt(p),
       isOnNest: (p) => dist(p, this.nestCenter) <= NEST_RADIUS + 4,
       isOverUi: (sx, sy) => (this.scene.get('Hud') as HudScene).isOverUi(sx, sy),
+      onPaintWall: (p, erase) => {
+        const tile = { x: worldToTile(p.x), y: worldToTile(p.y) };
+        this.issue(erase ? { type: 'removeWalls', tiles: [tile] } : { type: 'planWalls', tiles: [tile] });
+      },
     });
     this.cameras.main.centerOn(this.nestCenter.x, this.nestCenter.y);
 
     const kb = this.input.keyboard!;
-    // Esc clears the selection first, so a stray press doesn't quit the game.
+    // Esc backs out one level: build mode, then selection, then pause.
     kb.on('keydown-ESC', () => {
-      if (this.selection.hasSelection) this.selection.clear();
-      else this.toMenu();
+      if (this.selection.buildMode) this.setBuildMode(false);
+      else if (this.selection.hasSelection) this.selection.clear();
+      else this.togglePause();
     });
+    kb.on('keydown-P', () => this.togglePause());
+    kb.on('keydown-B', () => this.setBuildMode(!this.selection.buildMode));
     // H: select the nest and jump the camera home.
     kb.on('keydown-H', () => {
       if (this.player.eliminated) return;
@@ -88,20 +117,23 @@ export class GameScene extends Phaser.Scene {
   update(_time: number, delta: number): void {
     this.cameraCtl.update(delta);
 
-    if (this.state.winner === null) {
+    if (this.state.winner === null && !this.paused) {
       this.accumulator += Math.min(delta, MAX_FRAME_MS);
       while (this.accumulator >= TICK_MS) {
         stepSimulation(this.state);
         this.accumulator -= TICK_MS;
       }
+      if (this.state.tick - this.lastAutosaveTick >= AUTOSAVE_TICKS) this.autosave();
     }
 
     const { state, player } = this;
+    const sees = (p: Point) => isVisibleTo(state, player.id, worldToTile(p.x), worldToTile(p.y));
     this.selection.prune();
-    this.ants.sync(state.ants, this.accumulator / TICK_MS, state.tick, this.selection.selected, (ant) =>
-      ant.colony === player.id || isVisibleTo(state, player.id, worldToTile(ant.x), worldToTile(ant.y)),
-    );
+    const alpha = this.paused ? 1 : this.accumulator / TICK_MS;
+    this.ants.sync(state.ants, alpha, state.tick, this.selection.selected, (a) => a.colony === player.id || sees(a));
+    this.creatures.sync(state.creatures, alpha, state.tick, sees);
     this.foods.sync(state.food, this.selection.selectedFood, this.cameras.main.zoom);
+    this.walls.sync(state, player.id, (tx, ty) => isExploredBy(state, player.id, tx, ty), true);
     this.fog.update(state, player.id);
     this.drawOverlay();
   }
@@ -115,16 +147,44 @@ export class GameScene extends Phaser.Scene {
     issueCommand(this.state, this.player.id, command);
   }
 
+  setBuildMode(on: boolean): void {
+    if (on && (this.player.eliminated || this.state.winner)) return;
+    this.selection.buildMode = on;
+    if (on) this.selection.clear();
+  }
+
+  togglePause(): void {
+    if (this.state.winner !== null) return;
+    this.paused = !this.paused;
+  }
+
+  save(): boolean {
+    return writeSave('manual', this.state);
+  }
+
+  private autosave(): void {
+    this.lastAutosaveTick = this.state.tick;
+    if (writeSave('auto', this.state)) (this.scene.get('Hud') as HudScene).toast('Autosaved');
+  }
+
   toMenu(): void {
+    // A finished game isn't worth continuing; don't leave it as the autosave.
+    if (this.state.winner !== null) deleteSave('auto');
     this.scene.start('Menu');
   }
 
   playAgain(): void {
+    deleteSave('auto');
     this.scene.restart({ seed: randomSeed(), difficulty: this.state.difficulty });
   }
 
-  /** Right-click: attack enemies, gather known food, explore unexplored ground, otherwise move. */
+  /** Right-click: attack enemies or creatures, gather known food, explore unexplored ground, otherwise move. */
   private orderTo(antIds: number[], target: Point): number {
+    const creature = this.visibleCreatureAt(target);
+    if (creature) {
+      this.issue({ type: 'attack', antIds, target: { creature: creature.id } });
+      return MARKER_COLORS.attack;
+    }
     const enemy = this.visibleEnemyAt(target);
     if (enemy) {
       this.issue({ type: 'attack', antIds, target: { ant: enemy.id } });
@@ -161,6 +221,17 @@ export class GameScene extends Phaser.Scene {
       bestDist = d;
     }
     return best;
+  }
+
+  private visibleCreatureAt(p: Point): Creature | null {
+    const slop = 4 / this.cameras.main.zoom;
+    return (
+      this.state.creatures.find(
+        (c) =>
+          dist(c, p) <= CREATURE_STATS[c.kind].radius + slop &&
+          isVisibleTo(this.state, this.player.id, worldToTile(c.x), worldToTile(c.y)),
+      ) ?? null
+    );
   }
 
   private knownEnemyNestAt(p: Point): Colony | null {
@@ -203,7 +274,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Nest health bars, the destroyed-nest look, and the rally flag. */
+  /** Nest health bars, the destroyed-nest look, the rally flag, and the build-mode cursor. */
   private drawOverlay(): void {
     const g = this.overlay;
     const zoom = this.cameras.main.zoom;
@@ -222,6 +293,15 @@ export class GameScene extends Phaser.Scene {
       const top = c.y - NEST_RADIUS - 14;
       g.fillStyle(0x000000, 0.75).fillRect(c.x - w / 2 - 1, top - 1, w + 2, 7);
       g.fillStyle(frac > 0.5 ? 0x6ad04a : frac > 0.25 ? 0xe0b13a : 0xe04a3a).fillRect(c.x - w / 2, top, w * frac, 5);
+    }
+
+    if (this.selection.buildMode) {
+      const p = this.input.activePointer;
+      const w = this.cameraCtl.screenToWorld(p.x, p.y);
+      const tx = worldToTile(w.x);
+      const ty = worldToTile(w.y);
+      const ok = wallPlanBlocker(this.state, this.player.id, tx, ty) === null;
+      g.lineStyle(2 / zoom, ok ? 0x7dff6a : 0xff4d4d).strokeRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
     }
 
     if (!this.selection.selectedNest) return;

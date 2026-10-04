@@ -6,9 +6,11 @@ import { regionAt } from './regions';
 import { Rng } from './rng';
 import { AI_PROFILES } from './difficulty';
 import { GameState, getColony, nestPoint } from './state';
+import { PebblePile, WALL_HP, WALL_PEBBLES, Wall, openPlans } from './walls';
 
 type GatherTask = Extract<Task, { kind: 'gather' }>;
 type ExploreTask = Extract<Task, { kind: 'explore' }>;
+type BuildTask = Extract<Task, { kind: 'build' }>;
 
 /** How close (px) an ant must get to its food/nest target to count as arrived. */
 const ARRIVE_DIST = 14;
@@ -35,6 +37,7 @@ export function updateTasks(state: GameState, rng: Rng): void {
     const task = ant.task;
     if (task.kind === 'gather') updateGather(state, ant, task, rng);
     else if (task.kind === 'explore') updateExplore(state, ant, task, rng);
+    else if (task.kind === 'build') updateBuild(state, ant, task, rng);
   }
 }
 
@@ -136,6 +139,117 @@ function findReplacementOrStop(state: GameState, ant: Ant, task: GatherTask): vo
   } else {
     ant.task = { kind: 'idle' };
   }
+}
+
+// ---------------------------------------------------------------- building
+
+/** Ticks spent prying a pebble loose. */
+const COLLECT_TICKS = 15;
+
+export function startBuilding(ant: Ant): void {
+  ant.task = { kind: 'build', phase: ant.pebble ? 'toSite' : 'toPile', timer: 0, retries: 0 };
+  ant.path = [];
+  ant.moveTarget = null;
+}
+
+/**
+ * Builder loop: fetch a pebble from the nearest known pile, carry it to the
+ * nearest unfinished wall plan, repeat. Builders stay on the job (idling at
+ * the nest) while there's nothing to build, so new plans get picked up.
+ */
+function updateBuild(state: GameState, ant: Ant, task: BuildTask, rng: Rng): void {
+  const plans = openPlans(state, ant.colony);
+  if (plans.length === 0) {
+    if (!isMoving(ant) && dist(ant, nestPoint(state, ant.colony)) > DEPOSIT_DIST * 2) {
+      ant.moveTarget = jitter(state, nestPoint(state, ant.colony), rng);
+    }
+    return;
+  }
+
+  switch (task.phase) {
+    case 'toPile': {
+      if (ant.pebble) return setPhase(task, 'toSite');
+      const pile = nearestKnownPile(state, ant);
+      if (!pile) return; // nothing known to build with; wait for scouts to find some
+      if (isMoving(ant)) return;
+      if (dist(ant, pile) <= ARRIVE_DIST) {
+        task.phase = 'collecting';
+        task.timer = COLLECT_TICKS;
+        return;
+      }
+      ant.moveTarget = jitter(state, pile, rng);
+      return;
+    }
+
+    case 'collecting': {
+      const pile = nearestKnownPile(state, ant);
+      if (!pile || dist(ant, pile) > ARRIVE_DIST * 2) return setPhase(task, 'toPile');
+      if (--task.timer > 0) return;
+      pile.amount--;
+      if (pile.amount <= 0) state.pebbles = state.pebbles.filter((p) => p !== pile);
+      ant.pebble = true;
+      return setPhase(task, 'toSite');
+    }
+
+    case 'toSite': {
+      if (isMoving(ant)) return;
+      const site = nearestPlan(state, ant, plans);
+      const center = { x: tileCenter(site.tile % state.map.width), y: tileCenter(Math.floor(site.tile / state.map.width)) };
+      if (dist(ant, center) <= 22) {
+        site.pebbles++;
+        ant.pebble = false;
+        if (site.pebbles >= WALL_PEBBLES) {
+          site.built = true;
+          site.hp = WALL_HP;
+        }
+        return setPhase(task, 'toPile');
+      }
+      if (task.retries++ > 6) {
+        // Can't reach this plan (e.g. walled off); drop the pebble and try again.
+        ant.pebble = false;
+        return setPhase(task, 'toPile');
+      }
+      ant.moveTarget = center;
+      return;
+    }
+  }
+}
+
+function setPhase(task: BuildTask, phase: BuildTask['phase']): void {
+  task.phase = phase;
+  task.timer = 0;
+  task.retries = 0;
+}
+
+function nearestKnownPile(state: GameState, ant: Ant): PebblePile | null {
+  const region = regionAt(state.map, worldToTile(ant.x), worldToTile(ant.y));
+  let best: PebblePile | null = null;
+  let bestDist = Infinity;
+  for (const p of state.pebbles) {
+    const tx = worldToTile(p.x);
+    const ty = worldToTile(p.y);
+    if (!isExploredBy(state, ant.colony, tx, ty) || regionAt(state.map, tx, ty) !== region) continue;
+    const d = dist(ant, p);
+    if (d < bestDist) {
+      best = p;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+function nearestPlan(state: GameState, ant: Ant, plans: Wall[]): Wall {
+  const w = state.map.width;
+  let best = plans[0];
+  let bestDist = Infinity;
+  for (const p of plans) {
+    const d = Math.hypot(tileCenter(p.tile % w) - ant.x, tileCenter(Math.floor(p.tile / w)) - ant.y);
+    if (d < bestDist || (d === bestDist && p.tile < best.tile)) {
+      best = p;
+      bestDist = d;
+    }
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------- exploring

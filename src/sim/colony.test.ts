@@ -10,7 +10,7 @@ const run = (state: GameState, ticks: number) => {
 };
 const quietGame = (seed = 5) => {
   const state = createNewGame(seed);
-  state.rules = { upkeep: false, ai: false, foodRegrowth: false };
+  state.rules = { upkeep: false, ai: false, foodRegrowth: false, wildlife: false };
   return state;
 };
 const count = (state: GameState, colony: 'black' | 'red', type?: string) =>

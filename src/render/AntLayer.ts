@@ -5,6 +5,7 @@ import { antTextureKey } from './textures';
 
 const SELECTION_COLOR = 0x7dff6a;
 const CARRIED_COLOR = 0xf3e2b0;
+const PEBBLE_COLOR = 0x9a9a9a;
 const HP_GOOD = 0x6ad04a;
 const HP_LOW = 0xe04a3a;
 
@@ -36,7 +37,6 @@ export class AntLayer {
     this.rings.clear();
     this.rings.lineStyle(1.5, SELECTION_COLOR);
     this.carried.clear();
-    this.carried.fillStyle(CARRIED_COLOR);
     this.hpBars.clear();
 
     for (const ant of ants) {
@@ -59,8 +59,9 @@ export class AntLayer {
         .setPosition(x + Math.cos(ant.angle) * lunge, y + Math.sin(ant.angle) * lunge)
         .setRotation(ant.angle);
 
-      if (ant.carrying > 0) {
+      if (ant.carrying > 0 || ant.pebble) {
         const reach = ANT_STATS[ant.type].radius + 3;
+        this.carried.fillStyle(ant.pebble ? PEBBLE_COLOR : CARRIED_COLOR);
         this.carried.fillCircle(x + Math.cos(ant.angle) * reach, y + Math.sin(ant.angle) * reach, 3);
       }
       const stats = ANT_STATS[ant.type];

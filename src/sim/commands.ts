@@ -3,10 +3,11 @@ import { startAttack } from './combat';
 import { ANT_COST, trainBlocker } from './economy';
 import { isExploredBy, isVisibleTo } from './fog';
 import { formationSlots } from './formation';
-import { Point, worldToTile } from './map';
+import { Point, TilePos, worldToTile } from './map';
 import { regionAt } from './regions';
 import { ColonyId, GameState, getColony, nestPoint } from './state';
-import { EXPLORE_RADIUS, startGathering } from './tasks';
+import { EXPLORE_RADIUS, startBuilding, startGathering } from './tasks';
+import { wallPlanBlocker } from './walls';
 
 /**
  * Orders that a colony can give its ants. The player's input and the AI
@@ -24,8 +25,14 @@ export type Command =
   | { type: 'cancelTraining'; index: number }
   /** Where newly hatched ants gather; null resets to the nest. */
   | { type: 'setRally'; target: Point | null }
-  /** Attack a visible enemy ant, or raid an enemy nest you have found. */
-  | { type: 'attack'; antIds: number[]; target: AttackTarget };
+  /** Attack a visible enemy ant or creature, or raid an enemy nest you have found. */
+  | { type: 'attack'; antIds: number[]; target: AttackTarget }
+  /** Mark tiles for wall building. Tiles that can't take a wall are skipped. */
+  | { type: 'planWalls'; tiles: TilePos[] }
+  /** Remove wall plans or knock down your own built walls. */
+  | { type: 'removeWalls'; tiles: TilePos[] }
+  /** Adjusts how many of the colony's workers build walls. */
+  | { type: 'setBuilders'; count: number };
 
 export function issueCommand(state: GameState, colony: ColonyId, command: Command): void {
   switch (command.type) {
@@ -64,14 +71,61 @@ export function issueCommand(state: GameState, colony: ColonyId, command: Comman
       if (!canTarget(state, colony, command.target)) break;
       for (const ant of ownAnts(state, colony, command.antIds)) startAttack(ant, command.target, null, null);
       break;
+    case 'planWalls':
+      for (const t of command.tiles) {
+        if (wallPlanBlocker(state, colony, t.x, t.y) !== null) continue;
+        const tile = t.y * state.map.width + t.x;
+        state.walls[tile] = { tile, owner: colony, built: false, pebbles: 0, hp: 0 };
+      }
+      break;
+    case 'removeWalls':
+      for (const t of command.tiles) {
+        const tile = t.y * state.map.width + t.x;
+        if (state.walls[tile]?.owner === colony) delete state.walls[tile];
+      }
+      break;
+    case 'setBuilders':
+      setBuilders(state, colony, command.count);
+      break;
   }
 }
 
-/** Fog-of-war check: only visible enemy ants and discovered enemy nests can be targeted. */
+/** Workers of `colony` currently assigned to wall building. */
+export function buildersOf(state: GameState, colony: ColonyId): Ant[] {
+  return state.ants.filter((a) => a.colony === colony && a.task.kind === 'build');
+}
+
+/** Same selection rules as setGatherers: idle workers first, then the least busy. */
+function setBuilders(state: GameState, colony: ColonyId, count: number): void {
+  const current = buildersOf(state, colony);
+  if (count > current.length) {
+    const nest = nestPoint(state, colony);
+    const availability = (a: Ant) =>
+      a.task.kind === 'idle' ? (isMoving(a) ? 1 : 0) : a.task.kind === 'explore' ? 2 : 3;
+    const candidates = state.ants
+      .filter((a) => a.colony === colony && a.type === 'worker' && a.task.kind !== 'build')
+      .sort((a, b) => availability(a) - availability(b) || dist2(a, nest) - dist2(b, nest) || a.id - b.id);
+    for (const ant of candidates.slice(0, count - current.length)) startBuilding(ant);
+  } else if (count < current.length) {
+    const release = [...current].sort((a, b) => Number(a.pebble) - Number(b.pebble) || a.id - b.id);
+    for (const ant of release.slice(0, current.length - Math.max(count, 0))) {
+      ant.task = { kind: 'idle' };
+      ant.pebble = false;
+      ant.path = [];
+      ant.moveTarget = null;
+    }
+  }
+}
+
+/** Fog-of-war check: only visible enemies/creatures and discovered enemy nests can be targeted. */
 function canTarget(state: GameState, colony: ColonyId, target: AttackTarget): boolean {
   if ('ant' in target) {
     const enemy = state.ants.find((a) => a.id === target.ant);
     return !!enemy && enemy.colony !== colony && isVisibleTo(state, colony, worldToTile(enemy.x), worldToTile(enemy.y));
+  }
+  if ('creature' in target) {
+    const c = state.creatures.find((x) => x.id === target.creature);
+    return !!c && isVisibleTo(state, colony, worldToTile(c.x), worldToTile(c.y));
   }
   const enemy = getColony(state, target.nest);
   return target.nest !== colony && !enemy.eliminated && isExploredBy(state, colony, enemy.nest.x, enemy.nest.y);

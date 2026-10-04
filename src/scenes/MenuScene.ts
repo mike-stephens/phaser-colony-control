@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { AI_PROFILES, Difficulty } from '../sim/difficulty';
+import { listSaves, readSave } from '../persistence/saves';
 import { randomSeed } from '../sim/rng';
 
 const DIFFICULTIES: { id: Difficulty; label: string; blurb: string }[] = [
@@ -68,14 +69,37 @@ export class MenuScene extends Phaser.Scene {
         .setOrigin(0.5, 0);
     });
 
-    this.makeButton(cx, height * 0.75, 'Load Game (coming soon)', false, () => {});
+    this.layoutSaves(cx, height * 0.72);
   }
 
-  private makeButton(x: number, y: number, label: string, enabled: boolean, onClick: () => void): void {
+  /** "Continue" buttons for each saved game, newest first. */
+  private layoutSaves(cx: number, top: number): void {
+    const saves = listSaves();
+    if (saves.length === 0) {
+      this.makeButton(cx, top, 'Load Game (no saves yet)', false, () => {});
+      return;
+    }
+    this.add
+      .text(cx, top - 30, 'Load game', { fontFamily: 'monospace', fontSize: '20px', color: '#cccccc' })
+      .setOrigin(0.5);
+    saves.forEach((save, i) => {
+      const name = save.slot === 'auto' ? 'Autosave' : 'Saved game';
+      const secs = Math.floor(save.tick / 20);
+      const time = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+      const label = `${name}: ${save.difficulty}, ${time} in (${ago(save.savedAt)})`;
+      this.makeButton(cx, top + 20 + i * 56, label, true, () => {
+        const state = readSave(save.slot);
+        if (state) this.scene.start('Game', { load: state });
+        else this.layout(); // vanished or unreadable; refresh the list
+      }, 18);
+    });
+  }
+
+  private makeButton(x: number, y: number, label: string, enabled: boolean, onClick: () => void, size = 24): void {
     const text = this.add
       .text(x, y, label, {
         fontFamily: 'monospace',
-        fontSize: '24px',
+        fontSize: `${size}px`,
         color: enabled ? '#ffffff' : '#666666',
         backgroundColor: '#333333',
         padding: { x: 20, y: 10 },
@@ -88,4 +112,12 @@ export class MenuScene extends Phaser.Scene {
     text.on('pointerout', () => text.setBackgroundColor('#333333'));
     text.on('pointerdown', onClick);
   }
+}
+
+function ago(ms: number): string {
+  const mins = Math.round((Date.now() - ms) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
 }

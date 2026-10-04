@@ -18,6 +18,8 @@ describe('starting ants', () => {
 describe('move command', () => {
   it('walks the group to the enemy nest without crossing obstacles', () => {
     const state = createNewGame(12345);
+    // Pure movement: no AI defenders or spiders to start fights on the way.
+    state.rules = { upkeep: false, ai: false, foodRegrowth: false, wildlife: false };
     const black = state.ants.filter((a) => a.colony === 'black');
     const red = state.colonies.find((c) => c.id === 'red')!;
     const target = { x: (red.nest.x + 0.5) * 32, y: (red.nest.y + 0.5) * 32 };

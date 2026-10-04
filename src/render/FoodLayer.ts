@@ -7,6 +7,7 @@ const FOOD_COLORS: Record<FoodKind, { fill: number; edge: number }> = {
   crumbs: { fill: 0xe9d8a6, edge: 0xa88d4f },
   seeds: { fill: 0xc79a5a, edge: 0x7a5426 },
   berries: { fill: 0xc2185b, edge: 0x6d0d33 },
+  carcass: { fill: 0x6b4f7a, edge: 0x2a1d33 },
 };
 const SELECTED_COLOR = 0xffe14d;
 

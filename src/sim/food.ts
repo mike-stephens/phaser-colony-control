@@ -1,6 +1,6 @@
 import type { Point } from './map';
 
-export type FoodKind = 'crumbs' | 'seeds' | 'berries';
+export type FoodKind = 'crumbs' | 'seeds' | 'berries' | 'carcass';
 
 export interface Food {
   id: number;
@@ -21,6 +21,7 @@ export const FOOD_AMOUNTS: Record<FoodKind, [min: number, max: number]> = {
   crumbs: [80, 150],
   seeds: [150, 250],
   berries: [250, 400],
+  carcass: [120, 120],
 };
 
 /** Display/hit radius in world pixels; shrinks as the source is used up. */

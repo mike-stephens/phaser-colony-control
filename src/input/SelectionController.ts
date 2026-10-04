@@ -9,7 +9,7 @@ import { CameraController } from './CameraController';
 const DRAG_THRESHOLD = 6;
 const BOX_COLOR = 0x7dff6a;
 
-type Gesture = 'none' | 'select' | 'command';
+type Gesture = 'none' | 'select' | 'command' | 'paint';
 
 export interface SelectionOptions {
   colony: ColonyId;
@@ -24,6 +24,8 @@ export interface SelectionOptions {
   isOnNest: (p: Point) => boolean;
   /** True when a screen point is over HUD UI, so the click is not for the world. */
   isOverUi: (sx: number, sy: number) => boolean;
+  /** Build mode: plan (or with erase, remove) a wall on the tile under a world point. */
+  onPaintWall: (p: Point, erase: boolean) => void;
 }
 
 /**
@@ -32,11 +34,14 @@ export interface SelectionOptions {
  *   left-drag              box-select (Shift adds to the selection)
  *   right-click / two-finger click / Ctrl+click   order selected ants
  *   right- or middle-drag  pan the camera
+ * In build mode, left-drag paints wall plans and right-drag (or Ctrl-drag) erases them.
  */
 export class SelectionController {
   readonly selected = new Set<number>();
   selectedFood: number | null = null;
   selectedNest = false;
+  buildMode = false;
+  private eraseStroke = false;
   private gesture: Gesture = 'none';
   private start = new Phaser.Math.Vector2();
   private dragging = false;
@@ -94,13 +99,23 @@ export class SelectionController {
     const ev = p.event as MouseEvent;
     // On a Mac, Ctrl+click is the conventional right-click.
     const isCommand = p.button === 2 || p.button === 1 || (p.button === 0 && ev.ctrlKey);
-    this.gesture = isCommand ? 'command' : 'select';
     this.start.set(p.x, p.y);
     this.dragging = false;
+    if (this.buildMode) {
+      this.gesture = 'paint';
+      this.eraseStroke = isCommand;
+      this.opts.onPaintWall(this.camera.screenToWorld(p.x, p.y), this.eraseStroke);
+      return;
+    }
+    this.gesture = isCommand ? 'command' : 'select';
   }
 
   private onMoveEvent(p: Phaser.Input.Pointer): void {
     if (this.gesture === 'none' || !p.isDown) return;
+    if (this.gesture === 'paint') {
+      this.opts.onPaintWall(this.camera.screenToWorld(p.x, p.y), this.eraseStroke);
+      return;
+    }
     if (!this.dragging && Phaser.Math.Distance.Between(this.start.x, this.start.y, p.x, p.y) > DRAG_THRESHOLD) {
       this.dragging = true;
     }

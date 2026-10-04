@@ -8,6 +8,8 @@ import { formationSlots } from './formation';
 import { GameMap, Point, TilePos, tileCenter } from './map';
 import { generateWorld } from './mapgen';
 import { regionAt } from './regions';
+import { PebblePile, Wall } from './walls';
+import { Creature } from './wildlife';
 
 export type ColonyId = 'black' | 'red';
 
@@ -50,14 +52,18 @@ export interface Rules {
   upkeep: boolean;
   ai: boolean;
   foodRegrowth: boolean;
+  wildlife: boolean;
 }
+
+/** Bump whenever GameState's shape changes; older saves are rejected. */
+export const STATE_VERSION = 2;
 
 /**
  * The complete, serializable game state. Rendering reads from this; nothing
  * in here may reference Phaser objects. Save/load = JSON of this object.
  */
 export interface GameState {
-  version: 1;
+  version: typeof STATE_VERSION;
   seed: number;
   /** Simulation RNG position, so a loaded game continues the same sequence. */
   rngState: number;
@@ -66,6 +72,10 @@ export interface GameState {
   colonies: Colony[];
   ants: Ant[];
   food: Food[];
+  pebbles: PebblePile[];
+  /** Walls and wall plans, keyed by tile index. */
+  walls: Record<number, Wall>;
+  creatures: Creature[];
   /** Per-colony explored grid (1 = seen at least once), row-major like map.tiles. */
   fog: Record<ColonyId, number[]>;
   /** Next id for any entity (ants, food, ...). */
@@ -80,10 +90,10 @@ const STARTING_ANTS: Record<AntType, number> = { worker: 10, soldier: 5, queen: 
 export const STARTING_FOOD = 100;
 
 export function createNewGame(seed: number, difficulty: Difficulty = 'medium'): GameState {
-  const { map, nestSites, foodSites } = generateWorld(seed, MAP_WIDTH, MAP_HEIGHT);
+  const { map, nestSites, foodSites, pebbleSites } = generateWorld(seed, MAP_WIDTH, MAP_HEIGHT);
   const tileCount = map.width * map.height;
   const state: GameState = {
-    version: 1,
+    version: STATE_VERSION,
     seed,
     rngState: (seed ^ 0x9e3779b9) >>> 0,
     tick: 0,
@@ -91,9 +101,12 @@ export function createNewGame(seed: number, difficulty: Difficulty = 'medium'): 
     colonies: [newColony('black', true, nestSites[0]), newColony('red', false, nestSites[1])],
     ants: [],
     food: [],
+    pebbles: [],
+    walls: {},
+    creatures: [],
     fog: { black: new Array(tileCount).fill(0), red: new Array(tileCount).fill(0) },
     nextId: 1,
-    rules: { upkeep: true, ai: true, foodRegrowth: true },
+    rules: { upkeep: true, ai: true, foodRegrowth: true, wildlife: true },
     difficulty,
     winner: null,
   };
@@ -101,6 +114,15 @@ export function createNewGame(seed: number, difficulty: Difficulty = 'medium'): 
     state.food.push({
       id: state.nextId++,
       kind: site.kind,
+      x: tileCenter(site.tile.x),
+      y: tileCenter(site.tile.y),
+      amount: site.amount,
+      max: site.amount,
+    });
+  }
+  for (const site of pebbleSites) {
+    state.pebbles.push({
+      id: state.nextId++,
       x: tileCenter(site.tile.x),
       y: tileCenter(site.tile.y),
       amount: site.amount,
